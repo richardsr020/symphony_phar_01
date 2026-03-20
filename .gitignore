@@ -1,0 +1,24 @@
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Runtime storage
+storage/cache/
+storage/sessions/
+
+# User uploads
+public/uploads/
+
+# Local database files
+database/*.sqlite
+database/*.sqlite3
+database/*.db
+
+# Production bundle artifacts
+production_bundle/
+production_bundle.tar.gz
