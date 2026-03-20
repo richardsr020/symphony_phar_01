@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Core\ExcelExporter;
 use App\Core\Session;
+use App\Models\Company;
 use App\Models\FiscalPeriod;
 use App\Models\Report;
 
@@ -108,16 +109,23 @@ class ReportsController extends Controller
         $rows[] = ['Periode', 'Libelle', (string) ($period['label'] ?? '')];
 
         $rows[] = ['Vue globale', 'Chiffre d affaires', $formatMoney($overview['revenue'] ?? 0)];
-        $rows[] = ['Vue globale', 'Charges', $formatMoney($overview['expenses'] ?? 0)];
+        $rows[] = ['Vue globale', 'CMV', $formatMoney($overview['cogs'] ?? 0)];
+        $rows[] = ['Vue globale', 'Marge brute', $formatMoney($overview['gross_margin'] ?? 0)];
+        $rows[] = ['Vue globale', 'Autres depenses', $formatMoney($overview['expenses'] ?? 0)];
         $rows[] = ['Vue globale', 'Resultat net', $formatMoney($overview['net'] ?? 0)];
-        $rows[] = ['Vue globale', 'Marge nette (%)', number_format((float) ($overview['profit_margin'] ?? 0), 2, '.', '')];
-        $rows[] = ['Vue globale', 'Ratio charges (%)', number_format((float) ($overview['expense_ratio'] ?? 0), 2, '.', '')];
+        $rows[] = ['Vue globale', 'Marge brute (%)', number_format((float) ($overview['profit_margin'] ?? 0), 2, '.', '')];
+        $rows[] = ['Vue globale', 'Ratio depenses (%)', number_format((float) ($overview['expense_ratio'] ?? 0), 2, '.', '')];
         $rows[] = ['Vue globale', 'TVA a payer', $formatMoney($overview['vat_due'] ?? 0)];
         $rows[] = ['Vue globale', 'Dettes clients', $formatMoney($overview['client_debt'] ?? 0)];
+        $rows[] = ['Vue globale', 'Encaissements', $formatMoney($overview['cash_in'] ?? 0)];
+        $rows[] = ['Vue globale', 'Decaissements', $formatMoney($overview['cash_out'] ?? 0)];
         $rows[] = ['Vue globale', 'Tresorerie disponible', $formatMoney($overview['cash_available'] ?? 0)];
+        $rows[] = ['Vue globale', 'Valeur stock', $formatMoney($overview['stock_value'] ?? 0)];
 
         $rows[] = ['Compte de resultat', 'Chiffre d affaires', $formatMoney($profitLoss['revenue'] ?? 0)];
-        $rows[] = ['Compte de resultat', 'Charges', $formatMoney($profitLoss['expenses'] ?? 0)];
+        $rows[] = ['Compte de resultat', 'CMV', $formatMoney($profitLoss['cogs'] ?? 0)];
+        $rows[] = ['Compte de resultat', 'Marge brute', $formatMoney($profitLoss['gross_margin'] ?? 0)];
+        $rows[] = ['Compte de resultat', 'Autres depenses', $formatMoney($profitLoss['expenses'] ?? 0)];
         $rows[] = ['Compte de resultat', 'Resultat net', $formatMoney($profitLoss['net'] ?? 0)];
 
         $rows[] = ['Bilan', 'Actifs', $formatMoney($balanceSheet['assets'] ?? 0)];
@@ -156,6 +164,52 @@ class ReportsController extends Controller
         $slug = preg_replace('/[^a-z0-9]+/i', '_', strtolower($reportType));
         $slug = trim((string) $slug, '_') ?: 'rapport';
         ExcelExporter::download('rapport_' . $slug, $headers, $rows);
+    }
+
+    public function pdfContent(): void
+    {
+        $reportType = (string) ($_GET['report_type'] ?? 'overview');
+        $payload = $this->buildReportPayload($reportType);
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+
+        $this->renderMain('reports/pdf', [
+            'title' => 'Apercu PDF rapport',
+            'reportType' => $payload['reportType'] ?? $reportType,
+            'period' => $payload['period'],
+            'overview' => $payload['overview'],
+            'monthlySeries' => $payload['monthlySeries'],
+            'revenueBreakdown' => $payload['revenueBreakdown'],
+            'expenseBreakdown' => $payload['expenseBreakdown'],
+            'profitLoss' => $payload['profitLoss'],
+            'balanceSheet' => $payload['balanceSheet'],
+            'tvaReport' => $payload['tvaReport'],
+            'company' => $companyId > 0 ? ((new Company())->findById($companyId) ?? []) : [],
+            'autoDownload' => false,
+        ]);
+    }
+
+    public function pdfDownload(): void
+    {
+        $reportType = (string) ($_GET['report_type'] ?? 'overview');
+        $payload = $this->buildReportPayload($reportType);
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+
+        $this->renderMain('reports/pdf', [
+            'title' => 'PDF rapport',
+            'reportType' => $payload['reportType'] ?? $reportType,
+            'period' => $payload['period'],
+            'overview' => $payload['overview'],
+            'monthlySeries' => $payload['monthlySeries'],
+            'revenueBreakdown' => $payload['revenueBreakdown'],
+            'expenseBreakdown' => $payload['expenseBreakdown'],
+            'profitLoss' => $payload['profitLoss'],
+            'balanceSheet' => $payload['balanceSheet'],
+            'tvaReport' => $payload['tvaReport'],
+            'company' => $companyId > 0 ? ((new Company())->findById($companyId) ?? []) : [],
+            'autoDownload' => true,
+        ]);
     }
 
     private function buildReportPayload(string $reportType): array

@@ -60,6 +60,13 @@ $menuItems = [
         'visible' => \App\Core\RolePermissions::canAccessInvoices($role),
     ],
     [
+        'icon' => 'fa-solid fa-truck',
+        'label' => 'Fournisseurs',
+        'route' => '/fournisseurs',
+        'aliases' => [],
+        'visible' => \App\Core\RolePermissions::canAccessStock($role),
+    ],
+    [
         'icon' => 'fa-solid fa-gear',
         'label' => 'Paramètres',
         'route' => '/settings',

@@ -616,6 +616,8 @@ class Dashboard extends Model
              INNER JOIN products p ON p.id = l.product_id
              WHERE l.company_id = :company_id
                AND p.is_active = 1
+               AND COALESCE(l.is_declassified, 0) = 0
+               AND l.quantity_remaining_base > 0
                AND l.expiration_date IS NOT NULL
                AND l.expiration_date <> \'\'
                AND l.expiration_date <= :threshold

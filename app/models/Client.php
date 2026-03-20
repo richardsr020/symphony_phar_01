@@ -4,6 +4,27 @@ namespace App\Models;
 
 class Client extends Model
 {
+    public function getByCompanyDateRange(int $companyId, string $fromDate, string $toDate): array
+    {
+        if ($companyId <= 0 || $fromDate === '' || $toDate === '') {
+            return [];
+        }
+
+        return $this->db->fetchAll(
+            'SELECT id, name, phone, email, address, created_at
+             FROM clients
+             WHERE company_id = :company_id
+               AND is_active = 1
+               AND DATE(created_at) BETWEEN :from_date AND :to_date
+             ORDER BY created_at DESC, id DESC',
+            [
+                'company_id' => $companyId,
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+            ]
+        );
+    }
+
     public function createFromPayload(int $companyId, int $userId, array $payload): int
     {
         $name = trim((string) ($payload['name'] ?? ''));

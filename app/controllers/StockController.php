@@ -50,6 +50,7 @@ class StockController extends Controller
             'summary' => $this->productModel->getSummary($companyId),
             'products' => $this->productModel->getByCompany($companyId, $filters),
             'openLots' => $this->productModel->getOpenLotsByCompany($companyId, $filters, 150),
+            'lotCatalog' => $this->productModel->getLotCatalog($companyId, 0),
             'recentMovements' => $this->productModel->getRecentMovements($companyId, 10),
             'alerts' => (new Dashboard())->getAlerts($companyId, 8),
             'editingProduct' => $editingProduct,
@@ -448,6 +449,34 @@ class StockController extends Controller
         }
     }
 
+    public function declassLot($id): void
+    {
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+        $userId = (int) ($sessionUser['id'] ?? 0);
+        $lotId = (int) $id;
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+
+        if ($companyId <= 0 || $userId <= 0 || $lotId <= 0) {
+            $this->redirect('/stock?error=auth_required');
+        }
+        if (!RolePermissions::canManageStock($role)) {
+            $this->redirect('/stock?error=permission_denied');
+        }
+
+        try {
+            $this->productModel->declassLot($companyId, $lotId, $userId);
+            AuditLogger::log($userId, 'stock_lot_declassified', 'stock_lots', $lotId, null, [
+                'action' => 'lot_declassified',
+            ]);
+            $this->redirect('/stock?success=lot_declassified');
+        } catch (\InvalidArgumentException $exception) {
+            $this->redirect('/stock?error=invalid_lot_declass');
+        } catch (\Throwable $exception) {
+            $this->redirect('/stock?error=lot_declass_failed');
+        }
+    }
+
     public function deleteLot($id): void
     {
         $sessionUser = Session::get('user', []);
@@ -622,6 +651,7 @@ class StockController extends Controller
             'lot_added' => 'Nouveau lot ajoute.',
             'lot_updated' => 'Quantite ajoutee au lot.',
             'lot_deleted' => 'Lot supprime et stock ajuste.',
+            'lot_declassified' => 'Lot declasse et retire du stock.',
             'lots_deleted_bulk' => 'Lots selectionnes supprimes et stock ajuste.',
             'stock_adjusted' => 'Stock mis a jour.',
             'purchase_order_created' => 'Bon de commande cree.',
@@ -649,6 +679,8 @@ class StockController extends Controller
             'lot_update_failed' => 'Impossible d ajouter la quantite au lot pour le moment.',
             'invalid_lot_delete' => 'Suppression du lot invalide.',
             'lot_delete_failed' => 'Impossible de supprimer le lot pour le moment.',
+            'invalid_lot_declass' => 'Declassement du lot invalide.',
+            'lot_declass_failed' => 'Impossible de declasser le lot pour le moment.',
             'invalid_stock_adjustment' => 'Ajustement de stock invalide (quantite insuffisante ou champs invalides).',
             'stock_adjust_failed' => 'Impossible de mettre a jour le stock pour le moment.',
             'invalid_purchase_order' => 'Bon de commande invalide. Verifiez fournisseur et lignes.',

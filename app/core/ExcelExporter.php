@@ -141,7 +141,7 @@ class ExcelExporter
         foreach ($cells as $value) {
             $cellRef = self::columnLetter($colIndex) . $rowIndex;
             $cellXml[] = '<c r="' . $cellRef . '" t="inlineStr"><is><t>'
-                . self::escapeXml((string) $value)
+                . self::escapeXml(self::sanitizeCell($value))
                 . '</t></is></c>';
             $colIndex++;
         }
@@ -189,8 +189,82 @@ class ExcelExporter
     {
         $cells = [];
         foreach ($row as $value) {
-            $cells[] = '<' . $cellTag . '>' . htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') . '</' . $cellTag . '>';
+            $cells[] = '<' . $cellTag . '>' . htmlspecialchars(self::sanitizeCell($value), ENT_QUOTES, 'UTF-8') . '</' . $cellTag . '>';
         }
         return implode('', $cells);
+    }
+
+    private static function sanitizeCell($value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+        if (is_bool($value)) {
+            return $value ? 'Oui' : 'Non';
+        }
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+        if (is_array($value) || is_object($value)) {
+            return self::flattenValue($value);
+        }
+
+        $text = (string) $value;
+        if ($text === '') {
+            return '';
+        }
+
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = strip_tags($text);
+        $text = trim($text);
+
+        if ((str_starts_with($text, '{') && str_ends_with($text, '}')) || (str_starts_with($text, '[') && str_ends_with($text, ']'))) {
+            $decoded = json_decode($text, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                return self::flattenValue($decoded);
+            }
+        }
+
+        $text = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $text) ?? $text;
+        $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+        return trim($text);
+    }
+
+    private static function flattenValue($value, string $prefix = ''): string
+    {
+        if ($value === null) {
+            return '';
+        }
+        if (is_bool($value)) {
+            return $value ? 'Oui' : 'Non';
+        }
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+        if (is_object($value)) {
+            $value = (array) $value;
+        }
+        if (!is_array($value)) {
+            return self::sanitizeCell($value);
+        }
+
+        $parts = [];
+        $isAssoc = array_keys($value) !== range(0, count($value) - 1);
+        foreach ($value as $key => $item) {
+            $itemValue = self::flattenValue($item);
+            if ($itemValue === '') {
+                continue;
+            }
+            if ($isAssoc) {
+                $label = self::sanitizeCell($key);
+                $parts[] = $label !== '' ? ($label . ': ' . $itemValue) : $itemValue;
+            } else {
+                $parts[] = $itemValue;
+            }
+        }
+
+        $joined = implode(' | ', $parts);
+        $joined = preg_replace('/\s+/u', ' ', $joined) ?? $joined;
+        return trim($joined);
     }
 }

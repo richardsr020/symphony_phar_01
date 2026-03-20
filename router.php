@@ -41,6 +41,9 @@ class Router {
         $this->addRoute('GET', '/dashboard', 'DashboardController@index', ['auth']);
         $this->addRoute('GET', '/suivi-clients', 'DashboardController@clientTracking', ['auth']);
         $this->addRoute('GET', '/suivi-clients/export', 'DashboardController@exportClientLedger', ['auth']);
+        $this->addRoute('GET', '/suivi-clients/export-summary', 'DashboardController@exportClientTracking', ['auth']);
+        $this->addRoute('GET', '/fournisseurs', 'SuppliersController@index', ['auth']);
+        $this->addRoute('GET', '/fournisseurs/export', 'SuppliersController@export', ['auth']);
         
         // Transactions
         $this->addRoute('GET', '/transactions', 'TransactionsController@index', ['auth']);
@@ -82,6 +85,7 @@ class Router {
         $this->addRoute('POST', '/stock/adjust/{id}', 'StockController@adjust', ['auth']);
         $this->addRoute('POST', '/stock/delete/{id}', 'StockController@delete', ['auth']);
         $this->addRoute('POST', '/stock/lots/{id}/update', 'StockController@updateLot', ['auth']);
+        $this->addRoute('POST', '/stock/lots/{id}/declass', 'StockController@declassLot', ['auth']);
         $this->addRoute('POST', '/stock/lots/{id}/delete', 'StockController@deleteLot', ['auth']);
         $this->addRoute('GET', '/stock/lots/export', 'StockController@exportLots', ['auth']);
         $this->addRoute('POST', '/stock/delete-bulk', 'StockController@deleteBulk', ['auth']);
@@ -93,6 +97,8 @@ class Router {
         $this->addRoute('GET', '/reports/balance', 'ReportsController@balanceSheet', ['auth']);
         $this->addRoute('GET', '/reports/tva', 'ReportsController@tva', ['auth']);
         $this->addRoute('GET', '/reports/export', 'ReportsController@export', ['auth']);
+        $this->addRoute('GET', '/reports/pdf-content', 'ReportsController@pdfContent', ['auth']);
+        $this->addRoute('GET', '/reports/pdf-download', 'ReportsController@pdfDownload', ['auth']);
 
         // Chatbox IA
         $this->addRoute('GET', '/chat', 'ChatController@index', ['auth']);

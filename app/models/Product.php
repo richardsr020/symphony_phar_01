@@ -62,6 +62,7 @@ class Product extends Model
                     WHERE l.product_id = p.id
                       AND l.company_id = :company_id
                       AND l.quantity_remaining_base > 0
+                      AND COALESCE(l.is_declassified, 0) = 0
                       AND l.expiration_date IS NOT NULL
                       AND l.expiration_date <> \'\'
                       AND l.expiration_date <= :exp_date
@@ -120,6 +121,7 @@ class Product extends Model
                       AND p2.company_id = :company_id
                       AND p2.is_active = 1
                       AND l.quantity_remaining_base > 0
+                      AND COALESCE(l.is_declassified, 0) = 0
                       AND l.expiration_date IS NOT NULL
                       AND l.expiration_date <> \'\'
                       AND l.expiration_date <= :today
@@ -132,6 +134,7 @@ class Product extends Model
                       AND p2.company_id = :company_id
                       AND p2.is_active = 1
                       AND l.quantity_remaining_base > 0
+                      AND COALESCE(l.is_declassified, 0) = 0
                       AND l.expiration_date IS NOT NULL
                       AND l.expiration_date <> \'\'
                       AND l.expiration_date <= :today
@@ -144,6 +147,7 @@ class Product extends Model
                       AND p2.company_id = :company_id
                       AND p2.is_active = 1
                       AND l.quantity_remaining_base > 0
+                      AND COALESCE(l.is_declassified, 0) = 0
                       AND l.expiration_date IS NOT NULL
                       AND l.expiration_date <> \'\'
                       AND l.expiration_date <= :today
@@ -222,6 +226,7 @@ class Product extends Model
                         WHERE l.company_id = :company_id
                           AND l.product_id = p.id
                           AND l.quantity_remaining_base > 0
+                          AND COALESCE(l.is_declassified, 0) = 0
                           AND (l.expiration_date IS NULL OR l.expiration_date = \'\' OR l.expiration_date > :today)
                         ORDER BY (l.expiration_date IS NULL OR l.expiration_date = \'\') ASC,
                                  l.expiration_date ASC,
@@ -236,6 +241,7 @@ class Product extends Model
                         WHERE l.company_id = :company_id
                           AND l.product_id = p.id
                           AND l.quantity_remaining_base > 0
+                          AND COALESCE(l.is_declassified, 0) = 0
                           AND (l.expiration_date IS NULL OR l.expiration_date = \'\' OR l.expiration_date > :today)
                         ORDER BY (l.expiration_date IS NULL OR l.expiration_date = \'\') ASC,
                                  l.expiration_date ASC,
@@ -250,6 +256,7 @@ class Product extends Model
                         WHERE l.company_id = :company_id
                           AND l.product_id = p.id
                           AND l.quantity_remaining_base > 0
+                          AND COALESCE(l.is_declassified, 0) = 0
                           AND (l.expiration_date IS NULL OR l.expiration_date = \'\' OR l.expiration_date > :today)
                     ) AS lots_available,
                     (
@@ -257,6 +264,7 @@ class Product extends Model
                         FROM stock_lots l
                         WHERE l.company_id = :company_id
                           AND l.product_id = p.id
+                          AND COALESCE(l.is_declassified, 0) = 0
                     ) AS lot_count
              FROM products p
              WHERE p.company_id = :company_id
@@ -672,7 +680,7 @@ class Product extends Model
     public function getOpenLotsByCompany(int $companyId, array $filters = [], ?int $limit = 120): array
     {
         $params = ['company_id' => $companyId];
-        $where = ['l.company_id = :company_id', 'l.quantity_remaining_base > 0'];
+        $where = ['l.company_id = :company_id', 'l.quantity_remaining_base > 0', 'COALESCE(l.is_declassified, 0) = 0'];
 
         $query = trim((string) ($filters['q'] ?? ''));
         if ($query !== '') {
@@ -741,6 +749,36 @@ class Product extends Model
         unset($lot);
 
         return $lots;
+    }
+
+    public function getLotCatalog(int $companyId, int $limit = 2000): array
+    {
+        if ($companyId <= 0) {
+            return [];
+        }
+
+        $sql = 'SELECT l.id,
+                       l.product_id,
+                       p.name AS product_name,
+                       p.unit AS base_unit,
+                       l.lot_code,
+                       l.supplier,
+                       l.quantity_initial_base,
+                       l.unit_cost_base,
+                       l.expiration_date,
+                       COALESCE(l.is_declassified, 0) AS is_declassified
+                FROM stock_lots l
+                INNER JOIN products p ON p.id = l.product_id
+                WHERE l.company_id = :company_id
+                  AND p.company_id = :company_id
+                  AND p.is_active = 1
+                ORDER BY l.id DESC';
+
+        if ($limit > 0) {
+            $sql .= ' LIMIT ' . (int) max(1, min(5000, $limit));
+        }
+
+        return $this->db->fetchAll($sql, ['company_id' => $companyId]);
     }
 
     public function updateLotFromPayload(int $companyId, int $lotId, array $payload, int $userId = 0): bool
@@ -916,6 +954,122 @@ class Product extends Model
         );
 
         return (int) ($row['id'] ?? 0);
+    }
+
+    public function declassLot(int $companyId, int $lotId, int $userId): bool
+    {
+        $lot = $this->findLotByIdForCompany($companyId, $lotId);
+        if ($lot === null) {
+            throw new \InvalidArgumentException('Lot introuvable.');
+        }
+        if ((int) ($lot['is_declassified'] ?? 0) === 1) {
+            return true;
+        }
+
+        $productId = (int) ($lot['product_id'] ?? 0);
+        $remaining = round((float) ($lot['quantity_remaining_base'] ?? 0), 6);
+        if ($productId <= 0) {
+            throw new \InvalidArgumentException('Lot invalide.');
+        }
+
+        $product = $this->db->fetchOne(
+            'SELECT id, quantity
+             FROM products
+             WHERE company_id = :company_id
+               AND id = :id
+             LIMIT 1',
+            [
+                'company_id' => $companyId,
+                'id' => $productId,
+            ]
+        );
+        if ($product === null) {
+            throw new \InvalidArgumentException('Produit introuvable.');
+        }
+
+        $before = round((float) ($product['quantity'] ?? 0), 6);
+        $effectiveOut = $remaining > 0 ? min($before, $remaining) : 0.0;
+        $after = max(0.0, round($before - $remaining, 6));
+
+        $reason = 'Declassement lot ' . (string) ($lot['lot_code'] ?? '');
+
+        $pdo = $this->db->getConnection();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->db->beginTransaction();
+        }
+
+        try {
+            if ($before !== $after) {
+                $this->db->execute(
+                    'UPDATE products
+                     SET quantity = :quantity,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = :id
+                       AND company_id = :company_id',
+                    [
+                        'quantity' => $after,
+                        'id' => $productId,
+                        'company_id' => $companyId,
+                    ]
+                );
+            }
+
+            $movementId = 0;
+            if ($effectiveOut > 0) {
+                $movementId = $this->appendMovement(
+                    $companyId,
+                    $productId,
+                    'out',
+                    round(-$effectiveOut, 6),
+                    $before,
+                    $after,
+                    $reason,
+                    $userId,
+                    (string) ($lot['lot_code'] ?? '')
+                );
+            }
+
+            $this->db->execute(
+                'UPDATE stock_lots
+                 SET is_declassified = 1,
+                     declassified_at = :declassified_at,
+                     quantity_remaining_base = 0,
+                     exhausted_at = :exhausted_at,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = :id
+                   AND company_id = :company_id',
+                [
+                    'declassified_at' => date('Y-m-d H:i:s'),
+                    'exhausted_at' => date('Y-m-d H:i:s'),
+                    'id' => $lotId,
+                    'company_id' => $companyId,
+                ]
+            );
+
+            if ($movementId > 0 && $effectiveOut > 0) {
+                $this->db->execute(
+                    'INSERT INTO stock_lot_allocations (stock_movement_id, lot_id, quantity_base)
+                     VALUES (:stock_movement_id, :lot_id, :quantity_base)',
+                    [
+                        'stock_movement_id' => $movementId,
+                        'lot_id' => $lotId,
+                        'quantity_base' => round(-$effectiveOut, 6),
+                    ]
+                );
+            }
+
+            if ($ownsTransaction) {
+                $this->db->commit();
+            }
+        } catch (\Throwable $exception) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $this->db->rollback();
+            }
+            throw $exception;
+        }
+
+        return true;
     }
 
     public function deleteLot(int $companyId, int $lotId, int $userId): bool
@@ -1115,6 +1269,7 @@ class Product extends Model
              FROM stock_lots
              WHERE company_id = :company_id
                AND quantity_remaining_base > 0
+               AND COALESCE(is_declassified, 0) = 0
                AND (expiration_date IS NULL OR expiration_date = \'\' OR expiration_date > :today)
                AND product_id IN (' . $productIdListSql . ')
              GROUP BY product_id',
@@ -1128,6 +1283,7 @@ class Product extends Model
                  SELECT product_id, MIN(id) AS min_id
                  FROM stock_lots
                  WHERE company_id = :company_id
+                   AND COALESCE(is_declassified, 0) = 0
                    AND product_id IN (' . $productIdListSql . ')
                  GROUP BY product_id
              ) x ON x.product_id = l.product_id AND x.min_id = l.id',
@@ -1197,6 +1353,7 @@ class Product extends Model
             'company_id = :company_id',
             'product_id = :product_id',
             'quantity_remaining_base > 0',
+            'COALESCE(is_declassified, 0) = 0',
         ];
 
         if (!$includeExpired) {
@@ -1257,7 +1414,7 @@ class Product extends Model
     private function findLotByIdForCompany(int $companyId, int $lotId): ?array
     {
         return $this->db->fetchOne(
-            'SELECT id, product_id, company_id, lot_code, supplier, quantity_initial_base, quantity_remaining_base, unit_cost_base, expiration_date
+            'SELECT id, product_id, company_id, lot_code, supplier, quantity_initial_base, quantity_remaining_base, unit_cost_base, expiration_date, is_declassified, declassified_at
              FROM stock_lots
              WHERE id = :id
                AND company_id = :company_id

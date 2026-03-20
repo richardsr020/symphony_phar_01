@@ -67,7 +67,12 @@ class Report extends Model
 
     public function getOverview(int $companyId, string $fromDate, string $toDate): array
     {
-        $current = $this->getIncomeExpense($companyId, $fromDate, $toDate);
+        $revenue = $this->getRevenueFromInvoices($companyId, $fromDate, $toDate);
+        $cogs = $this->getCogsFromInvoices($companyId, $fromDate, $toDate);
+        $stockPurchases = $this->getExpenseTotal($companyId, $fromDate, $toDate, 'achat_stock', false);
+        $otherExpenses = $this->getExpenseTotal($companyId, $fromDate, $toDate, 'achat_stock', true);
+        $grossMargin = $revenue - $cogs;
+        $net = $grossMargin - $otherExpenses;
 
         $from = new DateTimeImmutable($fromDate);
         $to = new DateTimeImmutable($toDate);
@@ -75,7 +80,11 @@ class Report extends Model
         $previousTo = $from->modify('-1 day');
         $previousFrom = $previousTo->modify('-' . ($days - 1) . ' days');
 
-        $previous = $this->getIncomeExpense($companyId, $previousFrom->format('Y-m-d'), $previousTo->format('Y-m-d'));
+        $prevRevenue = $this->getRevenueFromInvoices($companyId, $previousFrom->format('Y-m-d'), $previousTo->format('Y-m-d'));
+        $prevCogs = $this->getCogsFromInvoices($companyId, $previousFrom->format('Y-m-d'), $previousTo->format('Y-m-d'));
+        $prevOtherExpenses = $this->getExpenseTotal($companyId, $previousFrom->format('Y-m-d'), $previousTo->format('Y-m-d'), 'achat_stock', true);
+        $prevGrossMargin = $prevRevenue - $prevCogs;
+        $prevNet = $prevGrossMargin - $prevOtherExpenses;
 
         $vatRow = $this->db->fetchOne(
             'SELECT COALESCE(SUM(tax_amount), 0) AS vat_due
@@ -93,34 +102,43 @@ class Report extends Model
             ]
         );
 
-        $net = $current['revenue'] - $current['expenses'];
-        $previousNet = $previous['revenue'] - $previous['expenses'];
-        $profitMargin = $current['revenue'] > 0 ? ($net / $current['revenue']) * 100 : 0.0;
-        $expenseRatio = $current['revenue'] > 0 ? ($current['expenses'] / $current['revenue']) * 100 : 0.0;
+        $grossMarginRate = $revenue > 0 ? ($grossMargin / $revenue) * 100 : 0.0;
+        $expenseRatio = $revenue > 0 ? ($otherExpenses / $revenue) * 100 : 0.0;
         $clientDebt = $this->getClientDebt($companyId, $toDate);
-        $cashAvailable = $this->getCashAvailable($companyId, $fromDate, $toDate);
-        $revenueDelta = $current['revenue'] - $previous['revenue'];
-        $expensesDelta = $current['expenses'] - $previous['expenses'];
-        $netDelta = $net - $previousNet;
+        $cashSummary = $this->getCashSummary($companyId, $fromDate, $toDate);
+        $stockValue = $this->getStockValue($companyId);
+        $revenueDelta = $revenue - $prevRevenue;
+        $cogsDelta = $cogs - $prevCogs;
+        $expensesDelta = $otherExpenses - $prevOtherExpenses;
+        $netDelta = $net - $prevNet;
 
         return [
-            'revenue' => $current['revenue'],
-            'expenses' => $current['expenses'],
+            'revenue' => $revenue,
+            'cogs' => $cogs,
+            'gross_margin' => $grossMargin,
+            'expenses' => $otherExpenses,
             'net' => $net,
             'vat_due' => (float) ($vatRow['vat_due'] ?? 0),
             'client_debt' => $clientDebt,
-            'profit_margin' => round($profitMargin, 2),
+            'profit_margin' => round($grossMarginRate, 2),
             'expense_ratio' => round($expenseRatio, 2),
-            'cash_available' => $cashAvailable,
+            'cash_available' => (float) ($cashSummary['cash'] ?? 0),
+            'cash_in' => (float) ($cashSummary['payments'] ?? 0),
+            'cash_out' => (float) ($cashSummary['expenses'] ?? 0),
+            'stock_value' => $stockValue,
+            'stock_purchases' => $stockPurchases,
             'revenue_delta' => round($revenueDelta, 2),
             'expenses_delta' => round($expensesDelta, 2),
             'net_delta' => round($netDelta, 2),
-            'revenue_prev' => $previous['revenue'],
-            'expenses_prev' => $previous['expenses'],
-            'net_prev' => $previousNet,
-            'revenue_trend' => $this->computeTrend($current['revenue'], $previous['revenue']),
-            'expenses_trend' => $this->computeTrend($current['expenses'], $previous['expenses']),
-            'net_trend' => $this->computeTrend($net, $previousNet),
+            'revenue_prev' => $prevRevenue,
+            'cogs_prev' => $prevCogs,
+            'expenses_prev' => $prevOtherExpenses,
+            'net_prev' => $prevNet,
+            'revenue_trend' => $this->computeTrend($revenue, $prevRevenue),
+            'cogs_trend' => $this->computeTrend($cogs, $prevCogs),
+            'expenses_trend' => $this->computeTrend($otherExpenses, $prevOtherExpenses),
+            'net_trend' => $this->computeTrend($net, $prevNet),
+            'cogs_delta' => round($cogsDelta, 2),
         ];
     }
 
@@ -386,12 +404,18 @@ class Report extends Model
 
     public function getProfitLoss(int $companyId, string $fromDate, string $toDate): array
     {
-        $data = $this->getIncomeExpense($companyId, $fromDate, $toDate);
+        $revenue = $this->getRevenueFromInvoices($companyId, $fromDate, $toDate);
+        $cogs = $this->getCogsFromInvoices($companyId, $fromDate, $toDate);
+        $otherExpenses = $this->getExpenseTotal($companyId, $fromDate, $toDate, 'achat_stock', true);
+        $grossMargin = $revenue - $cogs;
+        $net = $grossMargin - $otherExpenses;
 
         return [
-            'revenue' => $data['revenue'],
-            'expenses' => $data['expenses'],
-            'net' => $data['revenue'] - $data['expenses'],
+            'revenue' => $revenue,
+            'cogs' => $cogs,
+            'gross_margin' => $grossMargin,
+            'expenses' => $otherExpenses,
+            'net' => $net,
         ];
     }
 
@@ -502,11 +526,12 @@ class Report extends Model
             'SELECT COALESCE(SUM(i.total - COALESCE(i.paid_amount, 0)), 0) AS client_debt
              FROM invoices i
              WHERE i.company_id = :company_id
-               AND i.status IN (:sent_status, :overdue_status)
-               AND i.invoice_date <= :to_date',
+               AND i.status IN (:sent_status, :paid_status, :overdue_status)
+              AND i.invoice_date <= :to_date',
             [
                 'company_id' => $companyId,
                 'sent_status' => 'sent',
+                'paid_status' => 'paid',
                 'overdue_status' => 'overdue',
                 'to_date' => $toDate,
             ]
@@ -515,7 +540,7 @@ class Report extends Model
         return round((float) ($row['client_debt'] ?? 0), 2);
     }
 
-    private function getCashAvailable(int $companyId, string $fromDate, string $toDate): float
+    private function getCashSummary(int $companyId, string $fromDate, string $toDate): array
     {
         $cashInvoicesRow = $this->db->fetchOne(
             'SELECT COALESCE(SUM(
@@ -567,7 +592,106 @@ class Report extends Model
         $transactionsIncome = (float) ($cashTransactionsRow['income_total'] ?? 0);
         $transactionsExpense = (float) ($cashTransactionsRow['expense_total'] ?? 0);
 
-        return round($cashFromInvoices + $transactionsIncome - $transactionsExpense, 2);
+        $payments = $cashFromInvoices + $transactionsIncome;
+        $cash = $payments - $transactionsExpense;
+
+        return [
+            'payments' => round($payments, 2),
+            'expenses' => round($transactionsExpense, 2),
+            'cash' => round($cash, 2),
+        ];
+    }
+
+    private function getRevenueFromInvoices(int $companyId, string $fromDate, string $toDate): float
+    {
+        $row = $this->db->fetchOne(
+            'SELECT COALESCE(SUM(i.total), 0) AS revenue
+             FROM invoices i
+             WHERE i.company_id = :company_id
+               AND i.status IN (:sent_status, :paid_status, :overdue_status)
+               AND i.invoice_date BETWEEN :from_date AND :to_date',
+            [
+                'company_id' => $companyId,
+                'sent_status' => 'sent',
+                'paid_status' => 'paid',
+                'overdue_status' => 'overdue',
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+            ]
+        );
+
+        return round((float) ($row['revenue'] ?? 0), 2);
+    }
+
+    private function getCogsFromInvoices(int $companyId, string $fromDate, string $toDate): float
+    {
+        $row = $this->db->fetchOne(
+            'SELECT COALESCE(SUM(it.cogs_amount), 0) AS cogs
+             FROM invoice_items it
+             INNER JOIN invoices i ON i.id = it.invoice_id
+             WHERE i.company_id = :company_id
+               AND i.status IN (:sent_status, :paid_status, :overdue_status)
+               AND i.invoice_date BETWEEN :from_date AND :to_date',
+            [
+                'company_id' => $companyId,
+                'sent_status' => 'sent',
+                'paid_status' => 'paid',
+                'overdue_status' => 'overdue',
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+            ]
+        );
+
+        return round((float) ($row['cogs'] ?? 0), 2);
+    }
+
+    private function getExpenseTotal(
+        int $companyId,
+        string $fromDate,
+        string $toDate,
+        ?string $subcategory = null,
+        bool $excludeSubcategory = false
+    ): float {
+        $params = [
+            'company_id' => $companyId,
+            'expense_type' => 'expense',
+            'void_status' => 'void',
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
+        ];
+
+        $where = [
+            't.company_id = :company_id',
+            't.type = :expense_type',
+            't.status <> :void_status',
+            't.transaction_date BETWEEN :from_date AND :to_date',
+        ];
+
+        if ($subcategory !== null) {
+            if ($excludeSubcategory) {
+                $where[] = 'COALESCE(t.expense_subcategory, \'\') <> :subcategory';
+            } else {
+                $where[] = 't.expense_subcategory = :subcategory';
+            }
+            $params['subcategory'] = $subcategory;
+        }
+
+        $row = $this->db->fetchOne(
+            'SELECT COALESCE(SUM(j.credit), 0) AS amount
+             FROM transactions t
+             INNER JOIN journal_entries j ON j.transaction_id = t.id
+             WHERE ' . implode(' AND ', $where),
+            $params
+        );
+
+        return round((float) ($row['amount'] ?? 0), 2);
+    }
+
+    private function getStockValue(int $companyId): float
+    {
+        $productModel = new Product($this->db);
+        $summary = $productModel->getSummary($companyId);
+        return round((float) ($summary['stock_value'] ?? 0), 2);
     }
 
     private function computeTrend(float $current, float $previous): float

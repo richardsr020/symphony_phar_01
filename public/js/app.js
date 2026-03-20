@@ -305,6 +305,23 @@ const Symphony = {
                 e.preventDefault();
                 sidebar.classList.toggle('open');
             });
+
+            document.addEventListener('click', (event) => {
+                if (!sidebar.classList.contains('open')) {
+                    return;
+                }
+
+                if (!window.matchMedia('(max-width: 1024px)').matches) {
+                    return;
+                }
+
+                const target = event.target;
+                if (sidebar.contains(target) || menuToggle.contains(target)) {
+                    return;
+                }
+
+                sidebar.classList.remove('open');
+            });
         }
         
         // Navigation stack (pour mobile)

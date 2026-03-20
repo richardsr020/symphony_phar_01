@@ -10,6 +10,7 @@ $summary = $summary ?? [
 ];
 $products = $products ?? [];
 $openLots = $openLots ?? [];
+$lotCatalog = $lotCatalog ?? [];
 $recentMovements = $recentMovements ?? [];
 $filters = $filters ?? ['q' => '', 'stock_state' => '', 'expiration_date' => '', 'supplier' => ''];
 $exportLotsQuery = array_filter([
@@ -350,225 +351,238 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     <?php endif; ?>
 
     <?php if ($canManageStock): ?>
-    <div class="stock-mix-grid">
-        <div class="card collapse-card <?= $showProductForm ? 'open' : '' ?>" id="product-form-card">
-            <?php
-                $editingPresentationRaw = trim((string) ($editingProduct['presentation'] ?? ''));
-                $editingPresentationChoice = 'boite';
-                $editingPresentationOther = '';
-                if ($editingPresentationRaw !== '') {
-                    $normalizedPresentation = strtolower($editingPresentationRaw);
-                    if (isset($presentationChoiceOptions[$normalizedPresentation]) && $normalizedPresentation !== 'autre') {
-                        $editingPresentationChoice = $normalizedPresentation;
-                    } else {
-                        $editingPresentationChoice = 'autre';
-                        $editingPresentationOther = $editingPresentationRaw;
-                    }
-                }
-            ?>
-            <h3 style="margin-bottom: 12px;"><?= is_array($editingProduct) ? 'Modifier le produit' : 'Creer un lot (nouveau produit)' ?></h3>
-            <form method="POST" action="<?= is_array($editingProduct) ? '/stock/update/' . (int) $editingProduct['id'] : '/stock/store' ?>" data-async="true" data-async-success="<?= is_array($editingProduct) ? 'Produit mis a jour.' : 'Lot cree.' ?>" class="stock-product-form" id="stock-product-form">
-                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
-                <input type="hidden" name="purchase_price" id="product-purchase-unit-base" value="<?= htmlspecialchars(number_format((float) ($editingProduct['purchase_price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
-                <input type="hidden" name="base_unit_code" id="product-base-unit" value="<?= htmlspecialchars((string) ($editingProduct['unit'] ?? 'unite'), ENT_QUOTES, 'UTF-8') ?>">
-                <input type="hidden" name="min_stock" id="product-min-stock" value="<?= htmlspecialchars(number_format((float) ($editingProduct['min_stock'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
-                <input type="hidden" id="product-sku-preview" value="<?= htmlspecialchars((string) (is_array($editingProduct) ? ($editingProduct['sku'] ?? '-') : $nextSkuPreview), ENT_QUOTES, 'UTF-8') ?>">
+    <div class="stock-modal-overlay" id="stock-new-lot-modal" aria-hidden="true">
+        <div class="stock-modal-dialog stock-modal-dialog-lg" role="dialog" aria-modal="true" aria-labelledby="stock-new-lot-title">
+            <div class="stock-modal-head">
+                <h3 id="stock-new-lot-title" style="margin:0;"><?= is_array($editingProduct) ? 'Modifier le produit' : 'Creer un lot (nouveau produit)' ?></h3>
+                <button type="button" class="btn-icon" id="stock-new-lot-close" aria-label="Fermer">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="stock-modal-body">
+                <div id="product-form-card">
+                    <?php
+                        $editingPresentationRaw = trim((string) ($editingProduct['presentation'] ?? ''));
+                        $editingPresentationChoice = 'boite';
+                        $editingPresentationOther = '';
+                        if ($editingPresentationRaw !== '') {
+                            $normalizedPresentation = strtolower($editingPresentationRaw);
+                            if (isset($presentationChoiceOptions[$normalizedPresentation]) && $normalizedPresentation !== 'autre') {
+                                $editingPresentationChoice = $normalizedPresentation;
+                            } else {
+                                $editingPresentationChoice = 'autre';
+                                $editingPresentationOther = $editingPresentationRaw;
+                            }
+                        }
+                    ?>
+                    <form method="POST" action="<?= is_array($editingProduct) ? '/stock/update/' . (int) $editingProduct['id'] : '/stock/store' ?>" data-async="true" data-async-success="<?= is_array($editingProduct) ? 'Produit mis a jour.' : 'Lot cree.' ?>" class="stock-product-form" id="stock-product-form">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                        <input type="hidden" name="purchase_price" id="product-purchase-unit-base" value="<?= htmlspecialchars(number_format((float) ($editingProduct['purchase_price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
+                        <input type="hidden" name="base_unit_code" id="product-base-unit" value="<?= htmlspecialchars((string) ($editingProduct['unit'] ?? 'unite'), ENT_QUOTES, 'UTF-8') ?>">
+                        <input type="hidden" name="min_stock" id="product-min-stock" value="<?= htmlspecialchars(number_format((float) ($editingProduct['min_stock'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
+                        <input type="hidden" id="product-sku-preview" value="<?= htmlspecialchars((string) (is_array($editingProduct) ? ($editingProduct['sku'] ?? '-') : $nextSkuPreview), ENT_QUOTES, 'UTF-8') ?>">
 
-                <div class="stock-form-layout">
-                    <div class="stock-form-columns">
-                    <section class="stock-form-panel">
-                        <h4>Produit</h4>
-                        <div class="stock-grid">
-                            <label class="filter-group stock-field-large">
-                                <span>Nom du produit *</span>
-                                <input class="filter-input" id="product-name" type="text" name="name" required value="<?= htmlspecialchars((string) ($editingProduct['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: Paracetamole">
-                            </label>
+                        <div class="stock-form-layout">
+                            <div class="stock-form-columns">
+                            <section class="stock-form-panel">
+                                <h4>Produit</h4>
+                                <div class="stock-grid">
+                                    <label class="filter-group stock-field-large">
+                                        <span>Nom du produit *</span>
+                                        <input class="filter-input" id="product-name" type="text" name="name" required value="<?= htmlspecialchars((string) ($editingProduct['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: Paracetamole">
+                                        <div class="field-error" data-error-for="product-name"></div>
+                                    </label>
 
-                            <label class="filter-group stock-field-medium">
-                                <span>Fournisseur</span>
-                                <input class="filter-input" id="product-supplier" type="text" name="supplier" value="<?= htmlspecialchars((string) ($editingProduct['supplier'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: Pharma RDC">
-                            </label>
+                                    <label class="filter-group stock-field-medium">
+                                        <span>Fournisseur</span>
+                                        <input class="filter-input" id="product-supplier" type="text" name="supplier" value="<?= htmlspecialchars((string) ($editingProduct['supplier'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: Pharma RDC">
+                                    </label>
 
-                            <label class="filter-group stock-field-medium">
-                                <span>Dosage</span>
-                                <input class="filter-input" id="product-dosage" type="text" list="product-dosage-suggestions" name="dosage" value="<?= htmlspecialchars((string) ($editingProduct['dosage'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: 500 mg">
-                            </label>
+                                    <label class="filter-group stock-field-medium">
+                                        <span>Dosage</span>
+                                        <input class="filter-input" id="product-dosage" type="text" list="product-dosage-suggestions" name="dosage" value="<?= htmlspecialchars((string) ($editingProduct['dosage'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: 500 mg">
+                                    </label>
 
-                            <label class="filter-group stock-field-medium">
-                                <span>Forme</span>
-                                <input class="filter-input" id="product-forme" type="text" list="product-forme-suggestions" name="forme" value="<?= htmlspecialchars((string) ($editingProduct['forme'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: comprime">
-                            </label>
+                                    <label class="filter-group stock-field-medium">
+                                        <span>Forme</span>
+                                        <input class="filter-input" id="product-forme" type="text" list="product-forme-suggestions" name="forme" value="<?= htmlspecialchars((string) ($editingProduct['forme'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: comprime">
+                                    </label>
 
-                            <label class="filter-group stock-field-large">
-                                <span>Presentation / Unite de base *</span>
-                                <select class="filter-select" id="product-presentation-choice" required>
-                                    <?php foreach ($presentationChoiceOptions as $choiceKey => $choiceLabel): ?>
-                                    <option value="<?= htmlspecialchars((string) $choiceKey, ENT_QUOTES, 'UTF-8') ?>" <?= $editingPresentationChoice === $choiceKey ? 'selected' : '' ?>><?= htmlspecialchars((string) $choiceLabel, ENT_QUOTES, 'UTF-8') ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <input class="filter-input" id="product-presentation-other" type="text" value="<?= htmlspecialchars((string) $editingPresentationOther, ENT_QUOTES, 'UTF-8') ?>" placeholder="Detaillez la categorie" style="<?= $editingPresentationChoice === 'autre' ? '' : 'display:none;' ?>">
-                                <input type="hidden" id="product-presentation" name="presentation" value="<?= htmlspecialchars((string) $editingPresentationRaw, ENT_QUOTES, 'UTF-8') ?>">
-                            </label>
+                                    <label class="filter-group stock-field-large">
+                                        <span>Presentation / Unite de base *</span>
+                                        <select class="filter-select" id="product-presentation-choice" required>
+                                            <?php foreach ($presentationChoiceOptions as $choiceKey => $choiceLabel): ?>
+                                            <option value="<?= htmlspecialchars((string) $choiceKey, ENT_QUOTES, 'UTF-8') ?>" <?= $editingPresentationChoice === $choiceKey ? 'selected' : '' ?>><?= htmlspecialchars((string) $choiceLabel, ENT_QUOTES, 'UTF-8') ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <input class="filter-input" id="product-presentation-other" type="text" value="<?= htmlspecialchars((string) $editingPresentationOther, ENT_QUOTES, 'UTF-8') ?>" placeholder="Detaillez la categorie" style="<?= $editingPresentationChoice === 'autre' ? '' : 'display:none;' ?>">
+                                        <input type="hidden" id="product-presentation" name="presentation" value="<?= htmlspecialchars((string) $editingPresentationRaw, ENT_QUOTES, 'UTF-8') ?>">
+                                    </label>
+                                </div>
+                            </section>
+
+                            <section class="stock-form-panel">
+                                <h4>Lot / Prix</h4>
+                                <div class="stock-grid">
+                                    <label class="filter-group stock-field-medium">
+                                        <span>Quantite du lot <?= is_array($editingProduct) ? '' : '*' ?></span>
+                                        <input class="filter-input" id="product-stock-quantity" type="number" step="0.000001" min="<?= is_array($editingProduct) ? '0' : '0.000001' ?>" name="quantity" <?= is_array($editingProduct) ? 'disabled' : 'required' ?> value="<?= htmlspecialchars(number_format((float) ($editingProduct['quantity'] ?? 0), 6, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
+                                    </label>
+
+                                    <label class="filter-group stock-field-medium">
+                                        <span>Prix achat du lot</span>
+                                        <input class="filter-input" id="product-lot-purchase-price" type="number" step="0.01" min="0" value="<?= htmlspecialchars(number_format((float) ($editingProduct['purchase_price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: 2500">
+                                        <div class="field-error" data-error-for="product-lot-purchase-price"></div>
+                                    </label>
+
+                                    <label class="filter-group stock-field-medium">
+                                        <span>Prix vente unitaire</span>
+                                        <input class="filter-input" id="product-sale-price" type="number" step="0.01" min="0" name="sale_price" value="<?= htmlspecialchars(number_format((float) ($editingProduct['sale_price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
+                                        <div class="field-error" data-error-for="product-sale-price"></div>
+                                    </label>
+                                    <label class="filter-group stock-field-medium">
+                                        <span>Date d'expiration <?= is_array($editingProduct) ? '' : '(lot initial)' ?></span>
+                                        <input class="filter-input" id="product-expiration-date" type="date" name="expiration_date" value="<?= htmlspecialchars((string) ($editingProduct['expiration_date'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                                        <div class="field-error" data-error-for="product-expiration-date"></div>
+                                    </label>
+                                    <?php if (!is_array($editingProduct)): ?>
+                                    <label class="filter-group stock-field-medium">
+                                        <span>N° lot *</span>
+                                        <input class="filter-input" id="product-initial-lot-code" type="text" name="initial_lot_code" placeholder="Ex: LOT-2026-001">
+                                        <div class="field-error" data-error-for="product-initial-lot-code"></div>
+                                    </label>
+                                    <?php endif; ?>
+                                </div>
+                            </section>
+                            </div>
+
+                            <aside class="stock-form-summary" id="product-smart-summary" aria-live="polite">
+                                <h4 style="margin:0 0 10px 0;">Resume en langage simple</h4>
+                                <p id="product-summary-text" style="margin:0 0 10px 0;color:var(--text-primary);font-size:13px;line-height:1.45;"></p>
+                                <div class="stock-summary-grid">
+                                    <div><span>SKU auto:</span> <strong id="summary-sku">-</strong></div>
+                                    <div><span>Unite base:</span> <strong id="summary-base-unit">-</strong></div>
+                                    <div><span>Seuil mini auto:</span> <strong id="summary-min-stock">-</strong></div>
+                                    <div><span>N° lot:</span> <strong id="summary-lot">-</strong></div>
+                                    <div><span>Prix achat unitaire:</span> <strong id="summary-purchase-unit">-</strong></div>
+                                    <div><span>Prix de vente unitaire:</span> <strong id="summary-sale-unit">-</strong></div>
+                                    <div><span>Marge:</span> <strong id="summary-margin">-</strong></div>
+                                </div>
+                            </aside>
                         </div>
-                    </section>
 
-                    <section class="stock-form-panel">
-                        <h4>Lot / Prix</h4>
-                        <div class="stock-grid">
-                            <label class="filter-group stock-field-medium">
-                                <span>Quantite du lot <?= is_array($editingProduct) ? '' : '*' ?></span>
-                                <input class="filter-input" id="product-stock-quantity" type="number" step="0.000001" min="<?= is_array($editingProduct) ? '0' : '0.000001' ?>" name="quantity" <?= is_array($editingProduct) ? 'disabled' : 'required' ?> value="<?= htmlspecialchars(number_format((float) ($editingProduct['quantity'] ?? 0), 6, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
-                            </label>
-
-                            <label class="filter-group stock-field-medium">
-                                <span>Prix achat du lot</span>
-                                <input class="filter-input" id="product-lot-purchase-price" type="number" step="0.01" min="0" value="<?= htmlspecialchars(number_format((float) ($editingProduct['purchase_price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: 2500">
-                            </label>
-
-                            <label class="filter-group stock-field-medium">
-                                <span>Prix vente unitaire</span>
-                                <input class="filter-input" id="product-sale-price" type="number" step="0.01" min="0" name="sale_price" value="<?= htmlspecialchars(number_format((float) ($editingProduct['sale_price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
-                            </label>
-                            <label class="filter-group stock-field-medium">
-                                <span>Date d'expiration <?= is_array($editingProduct) ? '' : '(lot initial)' ?></span>
-                                <input class="filter-input" id="product-expiration-date" type="date" name="expiration_date" value="<?= htmlspecialchars((string) ($editingProduct['expiration_date'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
-                            </label>
-                            <?php if (!is_array($editingProduct)): ?>
-                            <label class="filter-group stock-field-medium">
-                                <span>N° lot *</span>
-                                <input class="filter-input" id="product-initial-lot-code" type="text" name="initial_lot_code" placeholder="Ex: LOT-2026-001">
-                            </label>
+                        <div style="display:flex;align-items:flex-end;gap:8px;grid-column:1 / -1;margin-top:10px;">
+                            <button type="submit" id="stock-product-submit" class="btn <?= is_array($editingProduct) ? 'btn-primary' : 'btn-add' ?>"><?= is_array($editingProduct) ? 'Mettre a jour' : 'Enregistrer' ?></button>
+                            <?php if (is_array($editingProduct)): ?>
+                            <a class="btn btn-soft" href="/stock">Annuler</a>
                             <?php endif; ?>
                         </div>
-                    </section>
-                    </div>
+                        <div class="field-error" id="duplicate-lot-message"></div>
+                    </form>
 
-                    <aside class="stock-form-summary" id="product-smart-summary" aria-live="polite">
-                        <h4 style="margin:0 0 10px 0;">Resume en langage simple</h4>
-                        <p id="product-summary-text" style="margin:0 0 10px 0;color:var(--text-primary);font-size:13px;line-height:1.45;"></p>
-                        <div class="stock-summary-grid">
-                            <div><span>SKU auto:</span> <strong id="summary-sku">-</strong></div>
-                            <div><span>Unite base:</span> <strong id="summary-base-unit">-</strong></div>
-                            <div><span>Seuil mini auto:</span> <strong id="summary-min-stock">-</strong></div>
-                            <div><span>N° lot:</span> <strong id="summary-lot">-</strong></div>
-                            <div><span>Prix achat unitaire:</span> <strong id="summary-purchase-unit">-</strong></div>
-                            <div><span>Prix de vente unitaire:</span> <strong id="summary-sale-unit">-</strong></div>
-                            <div><span>Marge:</span> <strong id="summary-margin">-</strong></div>
-                        </div>
-                    </aside>
-                </div>
-
-                <div style="display:flex;align-items:flex-end;gap:8px;grid-column:1 / -1;margin-top:10px;">
-                    <button type="submit" class="btn <?= is_array($editingProduct) ? 'btn-primary' : 'btn-add' ?>"><?= is_array($editingProduct) ? 'Mettre a jour' : 'Enregistrer' ?></button>
-                    <?php if (is_array($editingProduct)): ?>
-                    <a class="btn btn-soft" href="/stock">Annuler</a>
-                    <?php endif; ?>
-                </div>
-            </form>
-
-            <datalist id="product-dosage-suggestions">
-                <?php foreach ($dosageSuggestions as $dosageSuggestion): ?>
-                <option value="<?= htmlspecialchars((string) $dosageSuggestion, ENT_QUOTES, 'UTF-8') ?>">
-                <?php endforeach; ?>
-            </datalist>
-
-            <datalist id="product-forme-suggestions">
-                <?php foreach ($defaultFormeOptions as $defaultForme): ?>
-                <option value="<?= htmlspecialchars((string) $defaultForme, ENT_QUOTES, 'UTF-8') ?>">
-                <?php endforeach; ?>
-            </datalist>
-
-            <?php if (!is_array($editingProduct)): ?>
-            <hr style="margin:18px 0;border:none;border-top:1px solid var(--border-light);">
-            <h3 style="margin-bottom: 8px;">Ajouter une quantite a un lot existant</h3>
-            <p class="text-secondary" style="font-size:12px;margin:0 0 12px 0;">
-                Si le lot recu existe deja, on ajoute seulement une quantite. Les autres proprietes restent verrouillees et l'ajout reste trace dans les mouvements.
-            </p>
-            <form method="POST" action="/stock/lots/0/update" data-action-template="/stock/lots/{id}/update" data-async="true" data-async-success="Quantite ajoutee au lot." id="stock-add-lot-form" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">
-                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
-
-                <label class="filter-group" style="grid-column:1 / -1;">
-                    <span>Lot existant *</span>
-                    <select class="filter-select" id="add-lot-existing-id" required <?= $openLots === [] ? 'disabled' : '' ?>>
-                        <option value="">Selectionner un lot...</option>
-                        <?php foreach ($openLots as $lot): ?>
-                        <?php
-                            $lotOptionId = (int) ($lot['id'] ?? 0);
-                            $lotOptionLabel = trim((string) ($lot['product_name'] ?? '')) . ' | Lot ' . trim((string) ($lot['lot_code'] ?? '-'));
-                            $lotOptionLabel .= ' | Stock ' . $formatNumber((float) ($lot['quantity_remaining_base'] ?? 0), 2) . ' ' . trim((string) ($lot['base_unit'] ?? 'unite'));
-                            if (!empty($lot['supplier'])) {
-                                $lotOptionLabel .= ' | ' . trim((string) $lot['supplier']);
-                            }
-                            $lotOptionExpired = (bool) ($lot['is_expired'] ?? false);
-                            if ($lotOptionExpired) {
-                                $lotOptionLabel .= ' | Perime';
-                            }
-                        ?>
-                        <option value="<?= $lotOptionId ?>" <?= $lotOptionExpired ? 'disabled' : '' ?>>
-                            <?= htmlspecialchars($lotOptionLabel, ENT_QUOTES, 'UTF-8') ?>
-                        </option>
+                    <datalist id="product-dosage-suggestions">
+                        <?php foreach ($dosageSuggestions as $dosageSuggestion): ?>
+                        <option value="<?= htmlspecialchars((string) $dosageSuggestion, ENT_QUOTES, 'UTF-8') ?>">
                         <?php endforeach; ?>
-                    </select>
-                </label>
+                    </datalist>
 
-                <label class="filter-group">
-                    <span>Quantite a ajouter *</span>
-                    <input class="filter-input" id="add-lot-quantity" type="number" step="0.000001" min="0.000001" name="quantity_add" required placeholder="Ex: 10" <?= $openLots === [] ? 'disabled' : '' ?>>
-                </label>
+                    <datalist id="product-forme-suggestions">
+                        <?php foreach ($defaultFormeOptions as $defaultForme): ?>
+                        <option value="<?= htmlspecialchars((string) $defaultForme, ENT_QUOTES, 'UTF-8') ?>">
+                        <?php endforeach; ?>
+                    </datalist>
 
-                <label class="filter-group">
-                    <span>Unite *</span>
-                    <select class="filter-select" id="add-lot-unit" name="unit_code" required <?= $openLots === [] ? 'disabled' : '' ?>>
-                        <option value="">Choisir l unite...</option>
-                    </select>
-                </label>
+                    <?php if (!is_array($editingProduct)): ?>
+                    <hr style="margin:18px 0;border:none;border-top:1px solid var(--border-light);">
+                    <h3 style="margin-bottom: 8px;">Ajouter une quantite a un lot existant</h3>
+                    <p class="text-secondary" style="font-size:12px;margin:0 0 12px 0;">
+                        Si le lot recu existe deja, on ajoute seulement une quantite. Les autres proprietes restent verrouillees et l'ajout reste trace dans les mouvements.
+                    </p>
+                    <form method="POST" action="/stock/lots/0/update" data-action-template="/stock/lots/{id}/update" data-async="true" data-async-success="Quantite ajoutee au lot." id="stock-add-lot-form" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
 
-                <label class="filter-group">
-                    <span>Statut</span>
-                    <input class="filter-input" id="add-lot-status" type="text" value="-" readonly>
-                </label>
+                        <label class="filter-group" style="grid-column:1 / -1;">
+                            <span>Lot existant *</span>
+                            <select class="filter-select" id="add-lot-existing-id" required <?= $openLots === [] ? 'disabled' : '' ?>>
+                                <option value="">Selectionner un lot...</option>
+                                <?php foreach ($openLots as $lot): ?>
+                                <?php
+                                    $lotOptionId = (int) ($lot['id'] ?? 0);
+                                    $lotOptionLabel = trim((string) ($lot['product_name'] ?? '')) . ' | Lot ' . trim((string) ($lot['lot_code'] ?? '-'));
+                                    $lotOptionLabel .= ' | Stock ' . $formatNumber((float) ($lot['quantity_remaining_base'] ?? 0), 2) . ' ' . trim((string) ($lot['base_unit'] ?? 'unite'));
+                                    if (!empty($lot['supplier'])) {
+                                        $lotOptionLabel .= ' | ' . trim((string) $lot['supplier']);
+                                    }
+                                    $lotOptionExpired = (bool) ($lot['is_expired'] ?? false);
+                                    if ($lotOptionExpired) {
+                                        $lotOptionLabel .= ' | Perime';
+                                    }
+                                ?>
+                                <option value="<?= $lotOptionId ?>" <?= $lotOptionExpired ? 'disabled' : '' ?>>
+                                    <?= htmlspecialchars($lotOptionLabel, ENT_QUOTES, 'UTF-8') ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
 
-                <label class="filter-group">
-                    <span>Produit</span>
-                    <input class="filter-input" id="add-lot-product-name" type="text" value="-" readonly>
-                </label>
+                        <label class="filter-group">
+                            <span>Quantite a ajouter *</span>
+                            <input class="filter-input" id="add-lot-quantity" type="number" step="0.000001" min="0.000001" name="quantity_add" required placeholder="Ex: 10" <?= $openLots === [] ? 'disabled' : '' ?>>
+                        </label>
 
-                <label class="filter-group">
-                    <span>N° lot</span>
-                    <input class="filter-input" id="add-lot-code" type="text" value="-" readonly>
-                </label>
+                        <label class="filter-group">
+                            <span>Unite *</span>
+                            <select class="filter-select" id="add-lot-unit" name="unit_code" required <?= $openLots === [] ? 'disabled' : '' ?>>
+                                <option value="">Choisir l unite...</option>
+                            </select>
+                        </label>
 
-                <label class="filter-group">
-                    <span>Fournisseur</span>
-                    <input class="filter-input" id="add-lot-supplier" type="text" value="-" readonly>
-                </label>
+                        <label class="filter-group">
+                            <span>Statut</span>
+                            <input class="filter-input" id="add-lot-status" type="text" value="-" readonly>
+                        </label>
 
-                <label class="filter-group">
-                    <span>Stock actuel du lot</span>
-                    <input class="filter-input" id="add-lot-current-quantity" type="text" value="-" readonly>
-                </label>
+                        <label class="filter-group">
+                            <span>Produit</span>
+                            <input class="filter-input" id="add-lot-product-name" type="text" value="-" readonly>
+                        </label>
 
-                <label class="filter-group" style="grid-column:1 / -1;">
-                    <span>Expiration / Cout unitaire</span>
-                    <input class="filter-input" id="add-lot-readonly-meta" type="text" value="-" readonly>
-                </label>
+                        <label class="filter-group">
+                            <span>N° lot</span>
+                            <input class="filter-input" id="add-lot-code" type="text" value="-" readonly>
+                        </label>
 
-                <div style="display:flex;align-items:flex-end;gap:8px;grid-column:1 / -1;">
-                    <button type="submit" class="btn btn-add" <?= $openLots === [] ? 'disabled' : '' ?>>Ajouter la quantite</button>
-                    <?php if ($openLots === []): ?>
-                    <span class="text-secondary" style="font-size:12px;">Aucun lot actif disponible.</span>
-                    <?php else: ?>
-                    <span class="text-secondary" style="font-size:12px;">Modification du lot interdite ici: seule la quantite peut augmenter.</span>
+                        <label class="filter-group">
+                            <span>Fournisseur</span>
+                            <input class="filter-input" id="add-lot-supplier" type="text" value="-" readonly>
+                        </label>
+
+                        <label class="filter-group">
+                            <span>Stock actuel du lot</span>
+                            <input class="filter-input" id="add-lot-current-quantity" type="text" value="-" readonly>
+                        </label>
+
+                        <label class="filter-group" style="grid-column:1 / -1;">
+                            <span>Expiration / Cout unitaire</span>
+                            <input class="filter-input" id="add-lot-readonly-meta" type="text" value="-" readonly>
+                        </label>
+
+                        <div style="display:flex;align-items:flex-end;gap:8px;grid-column:1 / -1;">
+                            <button type="submit" class="btn btn-add" <?= $openLots === [] ? 'disabled' : '' ?>>Ajouter la quantite</button>
+                            <?php if ($openLots === []): ?>
+                            <span class="text-secondary" style="font-size:12px;">Aucun lot actif disponible.</span>
+                            <?php else: ?>
+                            <span class="text-secondary" style="font-size:12px;">Modification du lot interdite ici: seule la quantite peut augmenter.</span>
+                            <?php endif; ?>
+                        </div>
+                    </form>
                     <?php endif; ?>
                 </div>
-            </form>
-            <?php endif; ?>
+            </div>
         </div>
-
     </div>
-    <?php endif; ?>
+<?php endif; ?>
 
-   
     <div class="card stock-sections-toolbar">
         <div class="stock-sections-toolbar-head">
             <strong>Sections affichables</strong>
@@ -818,6 +832,12 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                             <button type="submit" class="btn btn-soft btn-xs">Ajouter</button>
                         </form>
                         <div class="text-secondary" style="font-size:11px;margin-top:6px;">Lot verrouille: ajout de quantite uniquement.</div>
+                        <form method="POST" action="/stock/lots/<?= $lotId ?>/declass" class="js-declass-lot-form" data-lot-code="<?= htmlspecialchars((string) ($lot['lot_code'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" style="margin-top:6px;">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                            <button type="submit" class="btn-icon btn-icon-warning" title="Declassement du lot">
+                                <i class="fa-solid fa-box-archive"></i>
+                            </button>
+                        </form>
                         <form method="POST" action="/stock/lots/<?= $lotId ?>/delete" class="js-delete-lot-form" data-lot-code="<?= htmlspecialchars((string) ($lot['lot_code'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" style="margin-top:6px;">
                             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                             <button type="submit" class="btn btn-soft btn-xs btn-icon-danger">Supprimer</button>
@@ -1079,6 +1099,23 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.filter-input.is-invalid,
+.filter-select.is-invalid {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.field-error {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--danger);
+    display: none;
+}
+
+.field-error.is-visible {
+    display: block;
+}
+
 .filter-input[type="color"] {
     min-height: 42px;
     padding: 6px;
@@ -1116,6 +1153,16 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
 .btn-icon-danger:hover {
     background: rgba(239, 68, 68, 0.1);
     color: var(--danger);
+}
+
+.btn-icon-warning {
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 45%, var(--border-light));
+}
+
+.btn-icon-warning:hover {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--warning);
 }
 
 .stock-sections-toolbar {
@@ -1185,6 +1232,10 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     border: 1px solid var(--border-light);
     border-radius: 12px;
     box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
+}
+
+.stock-modal-dialog-lg {
+    width: min(1100px, 100%);
 }
 
 .stock-modal-head {
@@ -1296,6 +1347,12 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     const productPackagingQtyInput = document.getElementById('product-packaging-quantity');
     const productPackagingUnitPriceInput = document.getElementById('product-packaging-unit-price');
     const productSaleTotalInput = document.getElementById('product-sale-total');
+    const productExpirationInput = document.getElementById('product-expiration-date');
+    const stockProductSubmit = document.getElementById('stock-product-submit');
+    const duplicateLotMessage = document.getElementById('duplicate-lot-message');
+    const stockProductFields = stockProductForm
+        ? Array.from(stockProductForm.querySelectorAll('.filter-input, .filter-select'))
+        : [];
     const addLotForm = document.getElementById('stock-add-lot-form');
     const addLotExistingSelect = document.getElementById('add-lot-existing-id');
     const addLotUnitSelect = document.getElementById('add-lot-unit');
@@ -1306,6 +1363,8 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     const addLotCurrentQuantityInput = document.getElementById('add-lot-current-quantity');
     const addLotReadonlyMetaInput = document.getElementById('add-lot-readonly-meta');
     const addLotStatusInput = document.getElementById('add-lot-status');
+    const newLotModal = document.getElementById('stock-new-lot-modal');
+    const newLotModalCloseBtn = document.getElementById('stock-new-lot-close');
     const productModal = document.getElementById('stock-product-modal');
     const productModalBody = document.getElementById('stock-product-modal-body');
     const productModalCloseBtn = document.getElementById('stock-product-modal-close');
@@ -1322,6 +1381,7 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     const productMetaMap = <?= json_encode($productMetaMap, JSON_UNESCAPED_UNICODE) ?>;
     const productDetailsMap = <?= json_encode($productDetailsMap, JSON_UNESCAPED_UNICODE) ?>;
     const lotDetailsMap = <?= json_encode($lotDetailsMap, JSON_UNESCAPED_UNICODE) ?>;
+    const lotCatalog = <?= json_encode($lotCatalog, JSON_UNESCAPED_UNICODE) ?>;
     const isEditingProduct = <?= is_array($editingProduct) ? 'true' : 'false' ?>;
     const canManageStock = <?= $canManageStock ? 'true' : 'false' ?>;
     const stockCsrfToken = <?= json_encode($csrfToken, JSON_UNESCAPED_UNICODE) ?>;
@@ -1404,6 +1464,49 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
         .replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9_-]+/g, '')
         .slice(0, 30);
+
+    const normalizeText = (value) => String(value || '')
+        .toLowerCase()
+        .replace(/\s+/g, '');
+    const buildDisplayName = (name, supplier) => {
+        const baseName = String(name || '').trim();
+        const supplierName = String(supplier || '').trim();
+        if (baseName === '' || supplierName === '') {
+            return baseName;
+        }
+        if (baseName.toLowerCase().includes(supplierName.toLowerCase())) {
+            return baseName;
+        }
+        return `${baseName} - ${supplierName}`;
+    };
+    const normalizeDateValue = (value) => {
+        const raw = String(value || '').trim();
+        if (raw === '') {
+            return '';
+        }
+        return raw.slice(0, 10);
+    };
+    const normalizeNumberFixed = (value, decimals = 6) => {
+        const n = parseNumber(value);
+        return n.toFixed(decimals);
+    };
+    const buildLotKey = (data) => {
+        const name = normalizeText(buildDisplayName(data.product_name, data.supplier));
+        const code = normalizeText(data.lot_code);
+        if (name === '' || code === '') {
+            return '';
+        }
+        const supplier = normalizeText(data.supplier);
+        const expiration = normalizeDateValue(data.expiration_date);
+        const unitCost = normalizeNumberFixed(data.unit_cost_base, 6);
+        const qty = normalizeNumberFixed(data.quantity_initial_base, 6);
+        return [name, code, supplier, expiration, unitCost, qty].join('|');
+    };
+    const existingLotKeys = new Set(
+        Array.isArray(lotCatalog)
+            ? lotCatalog.map((item) => buildLotKey(item || {})).filter((key) => key !== '')
+            : []
+    );
 
     const syncPresentationAndBaseUnit = () => {
         const choice = String(productPresentationChoiceSelect?.value || 'boite').toLowerCase();
@@ -1579,13 +1682,42 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
         });
     });
 
-    if (toggleProductBtn && productFormCard) {
+    const openNewLotModal = () => {
+        if (!newLotModal) {
+            return;
+        }
+        newLotModal.classList.add('open');
+        newLotModal.setAttribute('aria-hidden', 'false');
+    };
+
+    const closeNewLotModal = () => {
+        if (!newLotModal) {
+            return;
+        }
+        newLotModal.classList.remove('open');
+        newLotModal.setAttribute('aria-hidden', 'true');
+    };
+
+    if (toggleProductBtn) {
         toggleProductBtn.addEventListener('click', () => {
-            productFormCard.classList.toggle('open');
-            if (productFormCard.classList.contains('open')) {
-                productFormCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            openNewLotModal();
+        });
+    }
+
+    if (newLotModalCloseBtn) {
+        newLotModalCloseBtn.addEventListener('click', closeNewLotModal);
+    }
+
+    if (newLotModal) {
+        newLotModal.addEventListener('click', (event) => {
+            if (event.target === newLotModal) {
+                closeNewLotModal();
             }
         });
+    }
+
+    if (isEditingProduct) {
+        openNewLotModal();
     }
 
     const refreshColorChip = () => {
@@ -1652,6 +1784,122 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
             productSaleTotalInput.value = (saleUnitPrice * quantity).toFixed(2);
         }
         refreshProductSummary();
+        refreshLiveValidation();
+    };
+
+    const setInvalidState = (input, invalid) => {
+        if (!input) {
+            return;
+        }
+        input.classList.toggle('is-invalid', invalid);
+        if (invalid) {
+            input.setAttribute('aria-invalid', 'true');
+        } else {
+            input.removeAttribute('aria-invalid');
+        }
+    };
+
+    const setFieldError = (input, message) => {
+        if (!stockProductForm || !input || !input.id) {
+            return;
+        }
+        const errorEl = stockProductForm.querySelector(`.field-error[data-error-for="${input.id}"]`);
+        if (!errorEl) {
+            return;
+        }
+        const text = String(message || '').trim();
+        if (text === '') {
+            errorEl.textContent = '';
+            errorEl.classList.remove('is-visible');
+        } else {
+            errorEl.textContent = text;
+            errorEl.classList.add('is-visible');
+        }
+    };
+
+    const setFormMessage = (message) => {
+        if (!duplicateLotMessage) {
+            return;
+        }
+        const text = String(message || '').trim();
+        if (text === '') {
+            duplicateLotMessage.textContent = '';
+            duplicateLotMessage.classList.remove('is-visible');
+        } else {
+            duplicateLotMessage.textContent = text;
+            duplicateLotMessage.classList.add('is-visible');
+        }
+    };
+
+    const refreshLiveValidation = () => {
+        if (!stockProductForm) {
+            return { duplicate: false, saleBelowCost: false, expirationTooSoon: false };
+        }
+
+        const purchaseUnit = parseNumber(productPurchaseUnitBaseInput?.value || '0');
+        const salePrice = parseNumber(productSalePriceInput?.value || '0');
+        const saleBelowCost = purchaseUnit > 0 && salePrice < purchaseUnit;
+
+        let expirationTooSoon = false;
+        const expirationRaw = String(productExpirationInput?.value || '').trim();
+        if (!isEditingProduct && expirationRaw !== '') {
+            const expirationDate = new Date(`${expirationRaw}T00:00:00`);
+            if (!Number.isNaN(expirationDate.getTime())) {
+                const threshold = new Date();
+                threshold.setMonth(threshold.getMonth() + 6);
+                threshold.setHours(0, 0, 0, 0);
+                expirationTooSoon = expirationDate <= threshold;
+            }
+        }
+
+        const lastFieldComplete = !isEditingProduct
+            && productInitialLotInput
+            && String(productInitialLotInput.value || '').trim() !== '';
+
+        let duplicate = false;
+        if (!isEditingProduct && lastFieldComplete) {
+            const name = normalizeText(buildDisplayName(productNameInput?.value || '', productSupplierInput?.value || ''));
+            const lotCode = normalizeText(productInitialLotInput?.value || '');
+            const qty = parseNumber(productStockQuantityInput?.value || '0');
+            if (name !== '' && lotCode !== '' && qty > 0 && purchaseUnit > 0) {
+                const key = [
+                    name,
+                    lotCode,
+                    normalizeText(productSupplierInput?.value || ''),
+                    normalizeDateValue(productExpirationInput?.value || ''),
+                    normalizeNumberFixed(purchaseUnit, 6),
+                    normalizeNumberFixed(qty, 6),
+                ].join('|');
+                duplicate = existingLotKeys.has(key);
+            }
+        }
+
+        const duplicateActive = duplicate && lastFieldComplete;
+
+        stockProductFields.forEach((field) => setInvalidState(field, false));
+        setInvalidState(productSalePriceInput, saleBelowCost);
+        setInvalidState(productLotPurchaseInput, saleBelowCost);
+        setInvalidState(productExpirationInput, expirationTooSoon);
+
+        if (duplicateActive) {
+            stockProductFields.forEach((field) => setInvalidState(field, true));
+        }
+
+        setFieldError(productSalePriceInput, saleBelowCost ? "Le prix de vente doit etre >= au prix d'achat." : '');
+        setFieldError(productLotPurchaseInput, saleBelowCost ? "Le prix d'achat ne peut pas depasser le prix de vente." : '');
+        setFieldError(productExpirationInput, expirationTooSoon ? 'La date d\'expiration doit etre a plus de 6 mois.' : '');
+        setFieldError(productInitialLotInput, duplicateActive ? 'Un lot identique existe deja.' : '');
+        setFieldError(productNameInput, duplicateActive ? 'Un lot identique existe deja.' : '');
+        setFormMessage(duplicateActive
+            ? 'Ce produit existe deja. Ajoutez simplement la quantite au lot existant.'
+            : '');
+
+        const hasError = duplicateActive || saleBelowCost || expirationTooSoon;
+        if (stockProductSubmit) {
+            stockProductSubmit.disabled = hasError;
+        }
+
+        return { duplicate: duplicateActive, saleBelowCost, expirationTooSoon };
     };
 
     const syncSmartIdentityFromName = () => {
@@ -1912,16 +2160,46 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                 recalcProductValues();
             });
         }
+        if (productSupplierInput) {
+            productSupplierInput.addEventListener('input', refreshLiveValidation);
+            productSupplierInput.addEventListener('change', refreshLiveValidation);
+        }
         if (productColorInput) {
             productColorInput.addEventListener('input', refreshColorChip);
             productColorInput.addEventListener('change', refreshColorChip);
         }
         if (productInitialLotInput) {
-            productInitialLotInput.addEventListener('input', refreshProductSummary);
-            productInitialLotInput.addEventListener('change', refreshProductSummary);
+            productInitialLotInput.addEventListener('input', () => {
+                refreshProductSummary();
+                refreshLiveValidation();
+            });
+            productInitialLotInput.addEventListener('change', () => {
+                refreshProductSummary();
+                refreshLiveValidation();
+            });
+        }
+        if (productExpirationInput) {
+            productExpirationInput.addEventListener('input', refreshLiveValidation);
+            productExpirationInput.addEventListener('change', refreshLiveValidation);
         }
         stockProductForm.addEventListener('submit', (event) => {
             syncPresentationAndBaseUnit();
+            const liveState = refreshLiveValidation();
+            if (liveState.duplicate) {
+                event.preventDefault();
+                window.alert('Un lot identique existe deja dans la base.');
+                return;
+            }
+            if (liveState.saleBelowCost) {
+                event.preventDefault();
+                window.alert('Le prix de vente ne peut pas etre inferieur au prix d achat.');
+                return;
+            }
+            if (liveState.expirationTooSoon) {
+                event.preventDefault();
+                window.alert('La date d expiration doit etre superieure a 6 mois.');
+                return;
+            }
             const name = String(productNameInput?.value || '').trim();
             const qty = parseNumber(productStockQuantityInput?.value || '0');
             const salePrice = parseNumber(productSalePriceInput?.value || '0');
@@ -2034,10 +2312,18 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                     : '-';
                 const isExpired = !!lot.is_expired;
                 const actionCell = canManageStock
-                    ? `<form method="POST" action="/stock/lots/${lotId}/delete" class="js-delete-lot-form-inline" data-lot-code="${escapeHtml(lot.lot_code || '')}" style="margin:0;">
-                                <input type="hidden" name="csrf_token" value="${escapeHtml(stockCsrfToken)}">
-                                <button type="submit" class="btn btn-soft btn-xs btn-icon-danger">Supprimer</button>
-                            </form>`
+                    ? `<div style="display:flex;gap:6px;align-items:center;">
+                                <form method="POST" action="/stock/lots/${lotId}/declass" class="js-declass-lot-form-inline" data-lot-code="${escapeHtml(lot.lot_code || '')}" style="margin:0;">
+                                    <input type="hidden" name="csrf_token" value="${escapeHtml(stockCsrfToken)}">
+                                    <button type="submit" class="btn-icon btn-icon-warning" title="Declassement du lot">
+                                        <i class="fa-solid fa-box-archive"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="/stock/lots/${lotId}/delete" class="js-delete-lot-form-inline" data-lot-code="${escapeHtml(lot.lot_code || '')}" style="margin:0;">
+                                    <input type="hidden" name="csrf_token" value="${escapeHtml(stockCsrfToken)}">
+                                    <button type="submit" class="btn btn-soft btn-xs btn-icon-danger">Supprimer</button>
+                                </form>
+                            </div>`
                     : '<span class="text-secondary">Lecture seule</span>';
                 return `
                     <tr class="${isExpired ? 'stock-lot-expired' : ''}">
@@ -2112,6 +2398,16 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                 }
             });
         });
+
+        productModalBody.querySelectorAll('.js-declass-lot-form-inline').forEach((form) => {
+            form.addEventListener('submit', (event) => {
+                const lotCode = form.getAttribute('data-lot-code') || 'ce lot';
+                const ok = window.confirm(`Declasser ${lotCode} ? Ce lot sera retire du stock actif.`);
+                if (!ok) {
+                    event.preventDefault();
+                }
+            });
+        });
     };
 
     const closeProductModal = () => {
@@ -2142,8 +2438,14 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     }
 
     document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && productModal && productModal.classList.contains('open')) {
+        if (event.key !== 'Escape') {
+            return;
+        }
+        if (productModal && productModal.classList.contains('open')) {
             closeProductModal();
+        }
+        if (newLotModal && newLotModal.classList.contains('open')) {
+            closeNewLotModal();
         }
     });
 
@@ -2161,6 +2463,16 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
         form.addEventListener('submit', (event) => {
             const lotCode = form.getAttribute('data-lot-code') || 'ce lot';
             const ok = window.confirm(`Supprimer ${lotCode} ? Le stock restant de ce lot sera retire.`);
+            if (!ok) {
+                event.preventDefault();
+            }
+        });
+    });
+
+    document.querySelectorAll('.js-declass-lot-form').forEach((form) => {
+        form.addEventListener('submit', (event) => {
+            const lotCode = form.getAttribute('data-lot-code') || 'ce lot';
+            const ok = window.confirm(`Declasser ${lotCode} ? Ce lot sera retire du stock actif.`);
             if (!ok) {
                 event.preventDefault();
             }

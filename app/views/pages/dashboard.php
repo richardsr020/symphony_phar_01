@@ -203,6 +203,7 @@ $formatCurrency = static function ($value): string {
         <?php endforeach; ?>
     </div>
 
+
     <!-- Charts Row -->
     <div class="charts-row">
         <div class="card">
@@ -231,88 +232,6 @@ $formatCurrency = static function ($value): string {
             <div class="chart-frame">
                 <canvas id="expenses-chart"></canvas>
             </div>
-        </div>
-    </div>
-
-    <div class="card" style="margin: 24px 0;">
-        <div class="card-header">
-            <h3>Rapprochement CA vs Tresorerie</h3>
-            <span class="text-secondary">Ecart = Tresorerie - Chiffre d affaires</span>
-        </div>
-
-        <div class="recon-grid">
-            <div class="recon-item">
-                <span>CA factures</span>
-                <strong><?= htmlspecialchars($formatCurrency($revenueInvoices), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item">
-                <span>Encaissements factures</span>
-                <strong><?= htmlspecialchars($formatCurrency($cashInvoices), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item">
-                <span>Ecart factures</span>
-                <strong class="<?= $invoiceGap >= 0 ? 'recon-pos' : 'recon-neg' ?>"><?= htmlspecialchars($formatCurrency($invoiceGap), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item">
-                <span>Revenus occasionnels</span>
-                <strong><?= htmlspecialchars($formatCurrency($revenueOccasional), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item">
-                <span>Flux transactions net</span>
-                <strong class="<?= $cashTransactions >= 0 ? 'recon-pos' : 'recon-neg' ?>"><?= htmlspecialchars($formatCurrency($cashTransactions), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item">
-                <span>Ecart transactions</span>
-                <strong class="<?= $transactionGap >= 0 ? 'recon-pos' : 'recon-neg' ?>"><?= htmlspecialchars($formatCurrency($transactionGap), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item">
-                <span>Charges (transactions)</span>
-                <strong class="<?= $expensesTransactions <= 0 ? 'recon-pos' : 'recon-neg' ?>"><?= htmlspecialchars($formatCurrency($expensesTransactions), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item">
-                <span>Tresorerie disponible</span>
-                <strong><?= htmlspecialchars($formatCurrency($cashTotal), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-            <div class="recon-item recon-total">
-                <span>Ecart total</span>
-                <strong class="<?= $totalGap >= 0 ? 'recon-pos' : 'recon-neg' ?>"><?= htmlspecialchars($formatCurrency($totalGap), ENT_QUOTES, 'UTF-8') ?></strong>
-            </div>
-        </div>
-
-        <div class="recon-table">
-            <div class="recon-table-header">
-                <h4>Mouvements de tresorerie sur la periode</h4>
-            </div>
-            <?php if ($cashReconciliation === []): ?>
-            <p class="text-secondary">Aucun mouvement trouve pour cette periode.</p>
-            <?php else: ?>
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Source</th>
-                        <th>Libelle</th>
-                        <th style="text-align:right;">Montant net</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($cashReconciliation as $row): ?>
-                    <?php
-                        $amount = (float) ($row['amount'] ?? 0);
-                        $sourceLabel = (string) ($row['source'] ?? '') === 'invoice' ? 'Facture' : 'Transaction';
-                    ?>
-                    <tr>
-                        <td><?= htmlspecialchars(date('d/m/Y', strtotime((string) ($row['movement_date'] ?? ''))), ENT_QUOTES, 'UTF-8') ?></td>
-                        <td><?= htmlspecialchars($sourceLabel, ENT_QUOTES, 'UTF-8') ?></td>
-                        <td><?= htmlspecialchars((string) ($row['label'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></td>
-                        <td style="text-align:right;" class="<?= $amount >= 0 ? 'recon-pos' : 'recon-neg' ?>">
-                            <?= htmlspecialchars($formatCurrency($amount), ENT_QUOTES, 'UTF-8') ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-            <?php endif; ?>
         </div>
     </div>
 
@@ -678,8 +597,8 @@ $formatCurrency = static function ($value): string {
     margin-bottom: 16px;
 }
 .recon-item {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
+    background: transparent;
+    border: 1px solid var(--border-light);
     border-radius: 10px;
     padding: 10px 12px;
     display: flex;
@@ -691,8 +610,8 @@ $formatCurrency = static function ($value): string {
     font-size: 15px;
 }
 .recon-total {
-    background: #eef2ff;
-    border-color: #c7d2fe;
+    background: rgba(84, 136, 14, 0.08);
+    border-color: var(--accent);
 }
 .recon-pos { color: #0f9d58; }
 .recon-neg { color: #dc2626; }
@@ -710,6 +629,17 @@ $formatCurrency = static function ($value): string {
     .charts-row,
     .dashboard-grid {
         grid-template-columns: 1fr !important;
+    }
+}
+
+/* Dark theme adjustments */
+@media (prefers-color-scheme: dark) {
+    .recon-item {
+        background: transparent;
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+    .recon-total {
+        background: rgba(84, 136, 14, 0.15);
     }
 }
 </style>

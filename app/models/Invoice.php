@@ -1673,6 +1673,7 @@ class Invoice extends Model
              LEFT JOIN stock_lots l
                ON l.product_id = p.id
               AND l.company_id = p.company_id
+              AND COALESCE(l.is_declassified, 0) = 0
              WHERE p.company_id = :company_id
                AND p.is_active = 1
                AND p.id IN (' . implode(', ', $placeholders) . ')

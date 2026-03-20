@@ -5,9 +5,11 @@ namespace App\Controllers;
 use App\Core\ExcelExporter;
 use App\Core\RolePermissions;
 use App\Core\Session;
+use App\Models\Client;
 use App\Models\Dashboard;
 use App\Models\FiscalPeriod;
 use App\Models\Invoice;
+use App\Models\Report;
 
 class DashboardController extends Controller
 {
@@ -35,6 +37,24 @@ class DashboardController extends Controller
             $payload['cashReconciliation'] = [];
         }
 
+        $reportOverview = [];
+        $reportPeriodLabel = '';
+        $reportModel = new Report();
+        $period = is_array($payload['currentPeriod'] ?? null) ? $payload['currentPeriod'] : null;
+        if (is_array($period)) {
+            $fromDate = (string) ($period['start_date'] ?? '');
+            $toDate = (string) ($period['end_date'] ?? '');
+            if ($fromDate !== '' && $toDate !== '') {
+                $reportOverview = $reportModel->getOverview($companyId, $fromDate, $toDate);
+                $reportPeriodLabel = (string) ($period['label'] ?? ($fromDate . ' - ' . $toDate));
+            }
+        }
+        if ($reportOverview === []) {
+            $period = $reportModel->resolvePeriod(['period' => 'month']);
+            $reportOverview = $reportModel->getOverview($companyId, $period['from_date'], $period['to_date']);
+            $reportPeriodLabel = (string) ($period['label'] ?? '');
+        }
+
         $this->renderMain('dashboard', [
             'title' => 'Dashboard',
             'userName' => $userName !== '' ? $userName : 'Utilisateur',
@@ -52,6 +72,8 @@ class DashboardController extends Controller
             'canManageInvoices' => $canManageInvoices,
             'canAccessSettings' => $canAccessSettings,
             'flashError' => $this->resolveError((string) ($_GET['error'] ?? '')),
+            'reportOverview' => $reportOverview,
+            'reportPeriodLabel' => $reportPeriodLabel,
         ]);
     }
 
@@ -134,6 +156,58 @@ class DashboardController extends Controller
         $invoiceModel = new Invoice();
         $invoiceRows = $invoiceModel->getByCompanyDateRange($companyId, $fromDate, $toDate);
 
+        $clientKeys = [];
+        $invoicePhones = [];
+        foreach ($invoiceRows as $row) {
+            $key = $this->buildClientKey(
+                (string) ($row['customer_name'] ?? ''),
+                (string) ($row['customer_phone'] ?? '')
+            );
+            if ($key !== '') {
+                $clientKeys[$key] = true;
+            }
+            $normalizedPhone = preg_replace('/[^0-9]+/', '', (string) ($row['customer_phone'] ?? ''));
+            if (is_string($normalizedPhone) && $normalizedPhone !== '') {
+                $invoicePhones[$normalizedPhone] = true;
+            }
+        }
+
+        $clientRows = [];
+        $clientModel = new Client();
+        $clients = $clientModel->getByCompanyDateRange($companyId, $fromDate, $toDate);
+        foreach ($clients as $client) {
+            $key = $this->buildClientKey(
+                (string) ($client['name'] ?? ''),
+                (string) ($client['phone'] ?? '')
+            );
+            $normalizedPhone = preg_replace('/[^0-9]+/', '', (string) ($client['phone'] ?? ''));
+            if ($normalizedPhone !== '' && isset($invoicePhones[$normalizedPhone])) {
+                continue;
+            }
+            if ($key === '' || isset($clientKeys[$key])) {
+                continue;
+            }
+            $createdAt = trim((string) ($client['created_at'] ?? ''));
+            $createdDate = $createdAt !== '' ? substr($createdAt, 0, 10) : '';
+            if ($createdDate === '') {
+                continue;
+            }
+            $clientRows[] = [
+                'customer_name' => (string) ($client['name'] ?? ''),
+                'customer_phone' => (string) ($client['phone'] ?? ''),
+                'total' => 0,
+                'paid_amount' => 0,
+                'status' => 'client',
+                'invoice_date' => $createdDate,
+                'row_type' => 'client',
+            ];
+            $clientKeys[$key] = true;
+        }
+
+        if ($clientRows !== []) {
+            $invoiceRows = array_merge($invoiceRows, $clientRows);
+        }
+
         $regularThreshold = 2;
         $tracking = $this->buildClientTracking($invoiceRows, $groupBy, $segment, $regularThreshold);
         $selectedClientName = trim((string) ($_GET['client_name'] ?? ''));
@@ -158,6 +232,154 @@ class DashboardController extends Controller
             'selectedClientName' => $selectedClientName,
             'selectedClientPhone' => $selectedClientPhone,
         ]);
+    }
+
+    public function exportClientTracking(): void
+    {
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+
+        if ($companyId <= 0) {
+            $this->redirect('/login');
+        }
+
+        if (!RolePermissions::canAccessInvoices($role)) {
+            $this->redirect('/dashboard?error=clients_forbidden');
+        }
+
+        $fiscalModel = new FiscalPeriod();
+        $currentPeriod = $fiscalModel->getCurrentPeriod($companyId, date('Y-m-d'));
+        $periods = $fiscalModel->getByCompany($companyId);
+        if ($periods === [] && is_array($currentPeriod)) {
+            $periods = [$currentPeriod];
+        }
+
+        $selectedPeriodId = (int) ($_GET['period_id'] ?? 0);
+        $selectedPeriod = null;
+        foreach ($periods as $period) {
+            if ((int) ($period['id'] ?? 0) === $selectedPeriodId) {
+                $selectedPeriod = $period;
+                break;
+            }
+        }
+        if (!is_array($selectedPeriod)) {
+            $selectedPeriod = $currentPeriod;
+        }
+        if (!is_array($selectedPeriod)) {
+            $this->redirect('/settings?tab=fiscal&error=fiscal_required');
+        }
+
+        $groupBy = strtolower((string) ($_GET['group_by'] ?? 'month'));
+        $allowedGroupBy = ['quarter', 'month', 'week', 'day'];
+        if (!in_array($groupBy, $allowedGroupBy, true)) {
+            $groupBy = 'month';
+        }
+
+        $segment = strtolower((string) ($_GET['segment'] ?? 'all'));
+        $allowedSegments = ['all', 'regular', 'debt', 'known', 'anonymous'];
+        if (!in_array($segment, $allowedSegments, true)) {
+            $segment = 'all';
+        }
+
+        $fromDate = (string) ($selectedPeriod['start_date'] ?? date('Y-m-d'));
+        $toDate = (string) ($selectedPeriod['end_date'] ?? date('Y-m-d'));
+        $invoiceModel = new Invoice();
+        $invoiceRows = $invoiceModel->getByCompanyDateRange($companyId, $fromDate, $toDate);
+
+        $clientKeys = [];
+        $invoicePhones = [];
+        foreach ($invoiceRows as $row) {
+            $key = $this->buildClientKey(
+                (string) ($row['customer_name'] ?? ''),
+                (string) ($row['customer_phone'] ?? '')
+            );
+            if ($key !== '') {
+                $clientKeys[$key] = true;
+            }
+            $normalizedPhone = preg_replace('/[^0-9]+/', '', (string) ($row['customer_phone'] ?? ''));
+            if (is_string($normalizedPhone) && $normalizedPhone !== '') {
+                $invoicePhones[$normalizedPhone] = true;
+            }
+        }
+
+        $clientRows = [];
+        $clientModel = new Client();
+        $clients = $clientModel->getByCompanyDateRange($companyId, $fromDate, $toDate);
+        foreach ($clients as $client) {
+            $key = $this->buildClientKey(
+                (string) ($client['name'] ?? ''),
+                (string) ($client['phone'] ?? '')
+            );
+            $normalizedPhone = preg_replace('/[^0-9]+/', '', (string) ($client['phone'] ?? ''));
+            if ($normalizedPhone !== '' && isset($invoicePhones[$normalizedPhone])) {
+                continue;
+            }
+            if ($key === '' || isset($clientKeys[$key])) {
+                continue;
+            }
+            $createdAt = trim((string) ($client['created_at'] ?? ''));
+            $createdDate = $createdAt !== '' ? substr($createdAt, 0, 10) : '';
+            if ($createdDate === '') {
+                continue;
+            }
+            $clientRows[] = [
+                'customer_name' => (string) ($client['name'] ?? ''),
+                'customer_phone' => (string) ($client['phone'] ?? ''),
+                'total' => 0,
+                'paid_amount' => 0,
+                'status' => 'client',
+                'invoice_date' => $createdDate,
+                'row_type' => 'client',
+            ];
+            $clientKeys[$key] = true;
+        }
+
+        if ($clientRows !== []) {
+            $invoiceRows = array_merge($invoiceRows, $clientRows);
+        }
+
+        $regularThreshold = 2;
+        $tracking = $this->buildClientTracking($invoiceRows, $groupBy, $segment, $regularThreshold);
+
+        $headers = [
+            'Periode',
+            'Du',
+            'Au',
+            'Client',
+            'Telephone',
+            'Factures',
+            'Total facture',
+            'Paye',
+            'Dette',
+            'Regulier',
+            'En dette',
+            'Connu',
+            'Anonyme',
+        ];
+
+        $rows = [];
+        foreach (($tracking['groups'] ?? []) as $group) {
+            foreach (($group['clients'] ?? []) as $client) {
+                $rows[] = [
+                    (string) ($group['label'] ?? ''),
+                    (string) ($group['period_start'] ?? ''),
+                    (string) ($group['period_end'] ?? ''),
+                    (string) ($client['name'] ?? ''),
+                    (string) ($client['phone'] ?? ''),
+                    (string) (int) ($client['invoice_count'] ?? 0),
+                    number_format((float) ($client['total'] ?? 0), 2, '.', ''),
+                    number_format((float) ($client['paid'] ?? 0), 2, '.', ''),
+                    number_format((float) ($client['debt'] ?? 0), 2, '.', ''),
+                    !empty($client['is_regular']) ? 'Oui' : 'Non',
+                    !empty($client['has_debt']) ? 'Oui' : 'Non',
+                    !empty($client['is_known']) ? 'Oui' : 'Non',
+                    !empty($client['is_anonymous']) ? 'Oui' : 'Non',
+                ];
+            }
+        }
+
+        ExcelExporter::download('suivi_clients', $headers, $rows);
     }
 
     public function exportClientLedger(): void
@@ -268,6 +490,7 @@ class DashboardController extends Controller
     {
         $groups = [];
         foreach ($rows as $row) {
+            $rowType = (string) ($row['row_type'] ?? 'invoice');
             $invoiceDate = (string) ($row['invoice_date'] ?? '');
             $date = \DateTimeImmutable::createFromFormat('Y-m-d', $invoiceDate);
             if ($date === false) {
@@ -288,7 +511,10 @@ class DashboardController extends Controller
             $rawName = trim((string) ($row['customer_name'] ?? ''));
             $displayName = $rawName !== '' ? $rawName : 'Client';
             $phone = trim((string) ($row['customer_phone'] ?? ''));
-            $clientKey = strtolower($displayName . '|' . preg_replace('/[^0-9]+/', '', $phone));
+            $clientKey = $this->buildClientKey($displayName, $phone);
+            if ($clientKey === '') {
+                continue;
+            }
             if (!isset($groups[$bucketKey]['clients'][$clientKey])) {
                 $groups[$bucketKey]['clients'][$clientKey] = [
                     'name' => $displayName,
@@ -309,10 +535,12 @@ class DashboardController extends Controller
             $debt = max($total - $paid, 0);
 
             $clientRef = &$groups[$bucketKey]['clients'][$clientKey];
-            $clientRef['invoice_count'] += 1;
-            $clientRef['total'] += $total;
-            $clientRef['paid'] += $paid;
-            $clientRef['debt'] += $debt;
+            if ($rowType !== 'client') {
+                $clientRef['invoice_count'] += 1;
+                $clientRef['total'] += $total;
+                $clientRef['paid'] += $paid;
+                $clientRef['debt'] += $debt;
+            }
             if ($clientRef['phone'] === '' && $phone !== '') {
                 $clientRef['phone'] = $phone;
             }
@@ -442,6 +670,14 @@ class DashboardController extends Controller
             'start' => $start->format('Y-m-d'),
             'end' => $end->format('Y-m-d'),
         ];
+    }
+
+    private function buildClientKey(string $name, string $phone): string
+    {
+        $displayName = trim($name) !== '' ? trim($name) : 'Client';
+        $normalizedPhone = preg_replace('/[^0-9]+/', '', $phone);
+        $key = strtolower($displayName . '|' . ($normalizedPhone ?? ''));
+        return trim($key);
     }
 
     private function clientMatchesSegment(array $client, string $segment): bool

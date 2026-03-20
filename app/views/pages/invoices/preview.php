@@ -13,6 +13,12 @@ $issuerBrandColor = (string) ($invoice['issuer_brand_color'] ?? ($company['invoi
 if ($issuerBrandColor === '') {
     $issuerBrandColor = '#0F172A';
 }
+$customerNameRaw = trim((string) ($invoice['customer_name'] ?? ''));
+$customerNameNormalized = strtolower($customerNameRaw);
+$isAnonymousClient = $customerNameNormalized === ''
+    || $customerNameNormalized === 'client'
+    || $customerNameNormalized === 'client anonyme'
+    || $customerNameNormalized === 'client facture';
 $issueTime = '-';
 if (!empty($invoice['created_at'])) {
     $parsedIssueTime = strtotime((string) $invoice['created_at']);
@@ -40,10 +46,12 @@ if (!empty($invoice['created_at'])) {
                 <p class="muted">N° <?= htmlspecialchars((string) ($invoice['invoice_number'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
             </div>
             <div class="meta-right">
-                <p><strong>Date:</strong> <?= htmlspecialchars((string) ($invoice['invoice_date'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
+                <p><strong>Date d'emission:</strong> <?= htmlspecialchars((string) ($invoice['invoice_date'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
+                <?php if (!$isAnonymousClient): ?>
                 <p><strong>Heure:</strong> <?= htmlspecialchars($issueTime, ENT_QUOTES, 'UTF-8') ?></p>
                 <p><strong>Echeance:</strong> <?= htmlspecialchars((string) ($invoice['due_date'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
                 <p><strong>Statut:</strong> <?= htmlspecialchars((string) strtoupper((string) ($invoice['status'] ?? '-')), ENT_QUOTES, 'UTF-8') ?></p>
+                <?php endif; ?>
             </div>
         </header>
 
@@ -57,12 +65,14 @@ if (!empty($invoice['created_at'])) {
             </div>
         </section>
 
+        <?php if (!$isAnonymousClient): ?>
         <section class="client-card">
             <h3>Client</h3>
             <p><?= htmlspecialchars((string) ($invoice['customer_name'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
             <p class="muted"><?= nl2br(htmlspecialchars((string) ($invoice['customer_address'] ?? ''), ENT_QUOTES, 'UTF-8')) ?></p>
             <p class="muted">NIF/RCCM: <?= htmlspecialchars((string) (($invoice['customer_tax_id'] ?? '') !== '' ? $invoice['customer_tax_id'] : '-'), ENT_QUOTES, 'UTF-8') ?></p>
         </section>
+        <?php endif; ?>
 
         <table class="modern-table">
             <thead>
