@@ -582,9 +582,14 @@ class Dashboard extends Model
                 $outOfStock[] = [
                     'id' => 'stock-out-' . $id,
                     'type' => 'stock',
+                    'status_key' => 'out_of_stock',
                     'severity' => 'critical',
                     'title' => 'Rupture de stock',
                     'message' => $name . ' est en rupture de stock.',
+                    'product_id' => $id,
+                    'product_name' => $name,
+                    'current_quantity' => $qty,
+                    'min_stock' => $min,
                     'created_at' => date('Y-m-d H:i:s'),
                 ];
                 continue;
@@ -594,9 +599,14 @@ class Dashboard extends Model
                 $lowStock[] = [
                     'id' => 'stock-low-' . $id,
                     'type' => 'stock',
+                    'status_key' => 'low_stock',
                     'severity' => 'warning',
                     'title' => 'Stock bas',
                     'message' => $name . ' est en dessous du seuil minimum (' . number_format($qty, 2, '.', '') . ' / ' . number_format($min, 2, '.', '') . ').',
+                    'product_id' => $id,
+                    'product_name' => $name,
+                    'current_quantity' => $qty,
+                    'min_stock' => $min,
                     'created_at' => date('Y-m-d H:i:s'),
                 ];
             }
@@ -666,9 +676,15 @@ class Dashboard extends Model
             $alerts[] = [
                 'id' => 'expiry-' . $productId,
                 'type' => 'expiry',
+                'status_key' => 'expiry',
                 'severity' => 'critical',
                 'title' => 'Expiration produit',
                 'message' => $message,
+                'product_id' => $productId,
+                'product_name' => $label,
+                'lot_code' => $lotCode,
+                'expiration_date' => $expDate->format('Y-m-d'),
+                'days_left' => $daysLeft,
                 'created_at' => date('Y-m-d H:i:s'),
             ];
         }

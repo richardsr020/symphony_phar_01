@@ -6,9 +6,20 @@ use App\Core\Security;
 
 abstract class Controller
 {
+    protected function createAssetHelper(): callable
+    {
+        $scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? '');
+        $basePath = rtrim(str_replace('/index.php', '', $scriptName), '/');
+
+        return static function (string $path) use ($basePath): string {
+            return ($basePath === '' ? '' : $basePath) . $path;
+        };
+    }
+
     protected function renderMain(string $view, array $data = []): void
     {
         extract($data, EXTR_SKIP);
+        $asset = $this->createAssetHelper();
 
         ob_start();
         include APP_PATH . '/views/pages/' . $view . '.php';
@@ -25,6 +36,7 @@ abstract class Controller
     {
         extract($data, EXTR_SKIP);
         $csrfToken = Security::generateCSRF();
+        $asset = $this->createAssetHelper();
 
         ob_start();
         include APP_PATH . '/views/pages/auth/' . $view . '.php';
@@ -37,6 +49,7 @@ abstract class Controller
     {
         extract($data, EXTR_SKIP);
         $csrfToken = Security::generateCSRF();
+        $asset = $this->createAssetHelper();
 
         ob_start();
         include APP_PATH . '/views/pages/provider/' . $view . '.php';
@@ -49,6 +62,7 @@ abstract class Controller
     {
         extract($data, EXTR_SKIP);
         $csrfToken = Security::generateCSRF();
+        $asset = $this->createAssetHelper();
 
         ob_start();
         include APP_PATH . '/views/pages/provider/' . $view . '.php';

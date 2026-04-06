@@ -3,6 +3,7 @@ $receipt = $receipt ?? [];
 $company = $company ?? [];
 $allocations = is_array($receipt['allocations'] ?? null) ? $receipt['allocations'] : [];
 $autoPrint = (bool) ($autoPrint ?? false);
+$autoDownload = (bool) ($autoDownload ?? false);
 $issuerName = (string) ($company['name'] ?? 'Entreprise');
 $issuerLogo = (string) ($company['invoice_logo_url'] ?? '');
 $issuerBrandColor = (string) ($company['invoice_brand_color'] ?? '#0F172A');
@@ -21,6 +22,7 @@ if (!empty($receipt['created_at'])) {
         $issueTime = date('H:i', $parsedIssueTime);
     }
 }
+$downloadUrl = !empty($receipt['transaction_id']) ? '/receipts/pdf/' . (int) $receipt['transaction_id'] : '';
 ?>
 
 <div class="invoice-preview-page receipt-preview-page">
@@ -151,8 +153,6 @@ if (!empty($receipt['created_at'])) {
 }
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
 <?php if ($autoPrint): ?>
 <script>
 window.addEventListener('load', () => {
@@ -166,6 +166,8 @@ window.addEventListener('load', () => {
 <script>
 (() => {
     const receiptNumber = <?= json_encode($receiptNumber !== '' ? $receiptNumber : 'recu', JSON_UNESCAPED_UNICODE) ?>;
+    const autoDownload = <?= $autoDownload ? 'true' : 'false' ?>;
+    const downloadUrl = <?= json_encode($downloadUrl, JSON_UNESCAPED_UNICODE) ?>;
     const downloadBtn = document.getElementById('download-receipt-btn');
     const sheet = document.querySelector('.a4-sheet');
 
@@ -173,15 +175,36 @@ window.addEventListener('load', () => {
         return;
     }
 
-    downloadBtn.addEventListener('click', () => {
+    const notify = (message, type = 'info') => {
+        if (window.Symphony && typeof window.Symphony.showNotification === 'function') {
+            window.Symphony.showNotification(message, type);
+            return;
+        }
+        window.alert(message);
+    };
+
+    const triggerDownload = async (allowRouteFallback = false) => {
         const filename = receiptNumber ? `${receiptNumber}.pdf` : 'recu.pdf';
-        html2pdf().set({
-            margin: 0,
+        await window.SymphonyPdfExport.download({
+            button: downloadBtn,
+            sheet,
             filename,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        }).from(sheet).save();
+            notify,
+            fallbackUrl: allowRouteFallback ? downloadUrl : '',
+            autoDownload,
+        });
+    };
+
+    downloadBtn.addEventListener('click', async () => {
+        await triggerDownload(true);
     });
+
+    if (autoDownload) {
+        window.addEventListener('load', () => {
+            window.setTimeout(() => {
+                void triggerDownload(false);
+            }, 120);
+        }, { once: true });
+    }
 })();
 </script>

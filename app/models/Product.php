@@ -504,6 +504,43 @@ class Product extends Model
         return true;
     }
 
+    private function generateNextSku(int $companyId, string $productName = ''): string
+    {
+        $prefix = strtoupper(substr(preg_replace('/[^A-Z0-9]/', '', (string) $productName), 0, 3));
+        if ($prefix === '') {
+            $prefix = 'PRD';
+        }
+
+        $row = $this->db->fetchOne(
+            'SELECT id FROM products WHERE company_id = :company_id ORDER BY id DESC LIMIT 1',
+            ['company_id' => $companyId]
+        );
+        $nextSeq = ((int) ($row['id'] ?? 0)) + 1;
+
+        return sprintf('%s-%04d', $prefix, $nextSeq);
+    }
+
+    private function ensureSkuAvailable(int $companyId, string $sku, ?int $excludeProductId = null): void
+    {
+        $skuTrim = trim((string) $sku);
+        if ($skuTrim === '') {
+            throw new \InvalidArgumentException('SKU invalide.');
+        }
+
+        $params = ['company_id' => $companyId, 'sku' => $skuTrim];
+        $sql = 'SELECT id FROM products WHERE company_id = :company_id AND sku = :sku';
+        if ($excludeProductId !== null) {
+            $sql .= ' AND id <> :exclude_id';
+            $params['exclude_id'] = $excludeProductId;
+        }
+        $sql .= ' LIMIT 1';
+
+        $row = $this->db->fetchOne($sql, $params);
+        if ($row !== null) {
+            throw new \InvalidArgumentException('SKU deja utilise.');
+        }
+    }
+
     public function previewNextSku(int $companyId, string $productName = ''): string
     {
         return $this->generateNextSku($companyId, $productName);
@@ -745,6 +782,7 @@ class Product extends Model
         $today = date('Y-m-d');
         foreach ($lots as &$lot) {
             $lot['is_expired'] = $this->isLotExpired((string) ($lot['expiration_date'] ?? ''), $today);
+            $lot['is_in_peremption'] = $this->isLotInPeremption((string) ($lot['expiration_date'] ?? ''), $today);
         }
         unset($lot);
 
@@ -1343,6 +1381,45 @@ class Product extends Model
         return $options;
     }
 
+    private function isLotExpired(string $expirationDate, ?string $today = null): bool
+    {
+        $exp = trim($expirationDate);
+        if ($exp === '') {
+            return false;
+        }
+        $todayValue = $today ?? date('Y-m-d');
+        $expTs = strtotime($exp);
+        $todayTs = strtotime($todayValue);
+        if ($expTs === false || $todayTs === false) {
+            return false;
+        }
+        return $expTs <= $todayTs;
+    }
+
+    /**
+     * Returns true when a lot expiration is within the peremption window (<= 6 months ahead, but after today)
+     */
+    private function isLotInPeremption(string $expirationDate, ?string $today = null): bool
+    {
+        $exp = trim($expirationDate);
+        if ($exp === '') {
+            return false;
+        }
+        $todayValue = $today ?? date('Y-m-d');
+        $todayDt = date_create($todayValue);
+        $expDt = date_create($exp);
+        if ($todayDt === false || $expDt === false) {
+            return false;
+        }
+        // If already expired, it's not "in peremption"
+        if ($expDt <= $todayDt) {
+            return false;
+        }
+        // Compute threshold = today + 6 months
+        $threshold = (clone $todayDt)->modify('+6 months');
+        return $expDt <= $threshold;
+    }
+
     private function getOpenLots(int $companyId, int $productId, int $limit = 30, bool $includeExpired = false): array
     {
         $params = [
@@ -1365,7 +1442,7 @@ class Product extends Model
             'SELECT id, lot_code, supplier, source_type, source_reference, quantity_initial_base, quantity_remaining_base, expiration_date, opened_at
              FROM stock_lots
              WHERE ' . implode(' AND ', $where) . '
-             ORDER BY (expiration_date IS NULL OR expiration_date = \'\') ASC,
+             ORDER BY (expiration_date IS NULL OR expiration_date = \'\' ) ASC,
                       expiration_date ASC,
                       quantity_remaining_base ASC,
                       opened_at ASC,
@@ -1377,128 +1454,208 @@ class Product extends Model
         $today = date('Y-m-d');
         foreach ($rows as &$row) {
             $row['is_expired'] = $this->isLotExpired((string) ($row['expiration_date'] ?? ''), $today);
+            $row['is_in_peremption'] = $this->isLotInPeremption((string) ($row['expiration_date'] ?? ''), $today);
         }
         unset($row);
 
         return $rows;
     }
 
-    private function isLotExpired(string $expirationDate, ?string $today = null): bool
+    public function deleteProductFully(int $companyId, int $productId, int $userId = 0): bool
     {
-        $exp = trim($expirationDate);
-        if ($exp === '') {
-            return false;
+        $product = $this->db->fetchOne(
+            'SELECT id, quantity, purchase_price
+             FROM products
+             WHERE company_id = :company_id
+               AND id = :id
+             LIMIT 1',
+            [
+                'company_id' => $companyId,
+                'id' => $productId,
+            ]
+        );
+
+        if ($product === null) {
+            throw new \InvalidArgumentException('Produit introuvable.');
         }
-        $todayValue = $today ?? date('Y-m-d');
-        $expTs = strtotime($exp);
-        $todayTs = strtotime($todayValue);
-        if ($expTs === false || $todayTs === false) {
-            return false;
+
+        $beforeQty = round((float) ($product['quantity'] ?? 0), 6);
+
+        $pdo = $this->db->getConnection();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->db->beginTransaction();
         }
-        return $expTs <= $todayTs;
+
+        try {
+            // If there is remaining stock, create an OUT movement to zero the product quantity
+            $movementId = 0;
+            if ($beforeQty > 0) {
+                $movementId = $this->appendMovement(
+                    $companyId,
+                    $productId,
+                    'out',
+                    round(-$beforeQty, 6),
+                    $beforeQty,
+                    0.0,
+                    'Suppression definitive produit',
+                    $userId,
+                    null
+                );
+            }
+
+            // For each lot with remaining quantity: allocate the outflow and then delete the lot
+            $lots = $this->db->fetchAll(
+                'SELECT id, quantity_remaining_base
+                 FROM stock_lots
+                 WHERE company_id = :company_id
+                   AND product_id = :product_id',
+                [
+                    'company_id' => $companyId,
+                    'product_id' => $productId,
+                ]
+            );
+
+            foreach ($lots as $lot) {
+                $lotId = (int) ($lot['id'] ?? 0);
+                $remaining = round((float) ($lot['quantity_remaining_base'] ?? 0), 6);
+                if ($remaining > 0 && $movementId > 0) {
+                    $this->db->execute(
+                        'INSERT INTO stock_lot_allocations (stock_movement_id, lot_id, quantity_base)
+                         VALUES (:stock_movement_id, :lot_id, :quantity_base)',
+                        [
+                            'stock_movement_id' => $movementId,
+                            'lot_id' => $lotId,
+                            'quantity_base' => round(-$remaining, 6),
+                        ]
+                    );
+                }
+
+                // Remove the lot record entirely
+                $this->db->execute(
+                    'DELETE FROM stock_lots WHERE id = :id AND company_id = :company_id',
+                    [
+                        'id' => $lotId,
+                        'company_id' => $companyId,
+                    ]
+                );
+            }
+
+            // Remove unit conversions and related metadata
+            $this->db->execute(
+                'DELETE FROM product_unit_conversions WHERE product_id = :product_id AND company_id = :company_id',
+                [
+                    'product_id' => $productId,
+                    'company_id' => $companyId,
+                ]
+            );
+
+            // Finally remove the product row
+            $this->db->execute(
+                'DELETE FROM products WHERE id = :id AND company_id = :company_id',
+                [
+                    'id' => $productId,
+                    'company_id' => $companyId,
+                ]
+            );
+
+            if ($ownsTransaction) {
+                $this->db->commit();
+            }
+        } catch (\Throwable $exception) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $this->db->rollback();
+            }
+            throw $exception;
+        }
+
+        return true;
+    }
+
+    private function normalizeDate(string $date): ?string
+    {
+        $date = trim($date);
+        if ($date === '') {
+            return null;
+        }
+
+        $parsed = \DateTimeImmutable::createFromFormat('Y-m-d', $date);
+        if ($parsed === false) {
+            return null;
+        }
+
+        return $parsed->format('Y-m-d');
     }
 
     private function buildProductDisplayName(string $name, string $supplier): string
     {
         $baseName = trim($name);
         $supplierName = trim($supplier);
+
         if ($baseName === '' || $supplierName === '') {
             return $baseName;
         }
+
         if (stripos($baseName, $supplierName) !== false) {
             return $baseName;
         }
-        return trim($baseName . ' - ' . $supplierName);
+
+        return $baseName . ' - ' . $supplierName;
     }
 
-    private function findLotByIdForCompany(int $companyId, int $lotId): ?array
+    private function normalizeShortText(string $value, int $maxLength): ?string
     {
-        return $this->db->fetchOne(
-            'SELECT id, product_id, company_id, lot_code, supplier, quantity_initial_base, quantity_remaining_base, unit_cost_base, expiration_date, is_declassified, declassified_at
-             FROM stock_lots
-             WHERE id = :id
-               AND company_id = :company_id
-             LIMIT 1',
-            [
-                'id' => $lotId,
-                'company_id' => $companyId,
-            ]
-        );
+        $text = trim(preg_replace('/\s+/', ' ', (string) $value));
+        if ($text === '') {
+            return null;
+        }
+        if ($maxLength > 0) {
+            $text = substr($text, 0, $maxLength);
+        }
+        return $text;
     }
 
-    private function upsertOptionalPackagingFromPayload(int $companyId, int $productId, array $payload, string $baseUnit): void
+    private function normalizeColorHex(string $value): ?string
     {
-        $packagingCode = $this->normalizeUnitCode((string) ($payload['packaging_unit_code'] ?? ''));
-        $packagingLabel = trim((string) ($payload['packaging_unit_label'] ?? ''));
-        $packagingFactor = round((float) ($payload['packaging_factor'] ?? 0), 6);
-
-        if ($packagingCode === '' || $packagingFactor <= 0 || $packagingCode === $baseUnit) {
-            return;
+        $raw = trim((string) $value);
+        if ($raw === '') {
+            return null;
         }
 
-        if ($packagingLabel === '') {
-            $packagingLabel = $packagingCode;
+        if (isset($raw[0]) && $raw[0] === '#') {
+            $raw = substr($raw, 1);
+        }
+        $raw = strtolower($raw);
+
+        if (preg_match('/^[0-9a-f]{3}$/', $raw)) {
+            $raw = $raw[0] . $raw[0] . $raw[1] . $raw[1] . $raw[2] . $raw[2];
+        } elseif (!preg_match('/^[0-9a-f]{6}$/', $raw)) {
+            return null;
         }
 
-        $existing = $this->db->fetchOne(
-            'SELECT id
-             FROM product_unit_conversions
-             WHERE company_id = :company_id
-               AND product_id = :product_id
-               AND unit_code = :unit_code
-             LIMIT 1',
-            [
-                'company_id' => $companyId,
-                'product_id' => $productId,
-                'unit_code' => $packagingCode,
-            ]
-        );
-
-        if ($existing !== null) {
-            $this->db->execute(
-                'UPDATE product_unit_conversions
-                 SET unit_label = :unit_label,
-                     factor_to_base = :factor_to_base,
-                     is_active = 1,
-                     updated_at = CURRENT_TIMESTAMP
-                 WHERE id = :id',
-                [
-                    'unit_label' => substr($packagingLabel, 0, 80),
-                    'factor_to_base' => $packagingFactor,
-                    'id' => (int) ($existing['id'] ?? 0),
-                ]
-            );
-            return;
-        }
-
-        $this->db->execute(
-            'INSERT INTO product_unit_conversions (product_id, company_id, unit_code, unit_label, factor_to_base, is_base, is_active)
-             VALUES (:product_id, :company_id, :unit_code, :unit_label, :factor_to_base, 0, 1)',
-            [
-                'product_id' => $productId,
-                'company_id' => $companyId,
-                'unit_code' => $packagingCode,
-                'unit_label' => substr($packagingLabel, 0, 80),
-                'factor_to_base' => $packagingFactor,
-            ]
-        );
+        return '#' . $raw;
     }
 
-    private function resolveBaseUnitFromPayload(array $payload): string
+    private function normalizeUnitCode(string $unit): string
     {
-        $baseUnit = $this->normalizeUnitCode((string) ($payload['base_unit_code'] ?? ''));
-        if ($baseUnit === '') {
-            $baseUnit = $this->normalizeUnitCode((string) ($payload['unit'] ?? ''));
-        }
-        if ($baseUnit === '') {
-            $baseUnit = 'unite';
-        }
-
-        return $baseUnit;
+        $code = trim((string) $unit);
+        $code = strtolower($code);
+        // keep only alphanumeric and underscore/dash
+        $code = preg_replace('/[^a-z0-9_\-]/', '', $code);
+        return $code === '' ? 'unite' : $code;
     }
 
     private function findUnitFactor(int $companyId, int $productId, string $unitCode): float
     {
+        if ($companyId <= 0 || $productId <= 0) {
+            return 0.0;
+        }
+
+        $code = $this->normalizeUnitCode($unitCode);
+        if ($code === '') {
+            return 0.0;
+        }
+
         $row = $this->db->fetchOne(
             'SELECT factor_to_base
              FROM product_unit_conversions
@@ -1510,39 +1667,98 @@ class Product extends Model
             [
                 'company_id' => $companyId,
                 'product_id' => $productId,
-                'unit_code' => $unitCode,
+                'unit_code' => $code,
             ]
         );
 
-        if ($row === null) {
-            return 0.0;
+        if ($row !== null) {
+            $factor = round((float) ($row['factor_to_base'] ?? 0), 6);
+            return $factor > 0 ? $factor : 0.0;
         }
 
-        return round((float) ($row['factor_to_base'] ?? 0), 6);
-    }
-
-    private function ensureBaseUnitConversion(int $companyId, int $productId, string $baseUnit): void
-    {
-        $baseUnit = $this->normalizeUnitCode($baseUnit);
+        $product = $this->db->fetchOne(
+            'SELECT unit
+             FROM products
+             WHERE company_id = :company_id
+               AND id = :id
+             LIMIT 1',
+            [
+                'company_id' => $companyId,
+                'id' => $productId,
+            ]
+        );
+        $baseUnit = $this->normalizeUnitCode((string) ($product['unit'] ?? 'unite'));
         if ($baseUnit === '') {
             $baseUnit = 'unite';
         }
 
-        $this->db->execute(
-            'UPDATE product_unit_conversions
-             SET is_base = 0,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE company_id = :company_id
-               AND product_id = :product_id
-               AND unit_code <> :unit_code',
-            [
-                'company_id' => $companyId,
-                'product_id' => $productId,
-                'unit_code' => $baseUnit,
-            ]
+        if ($code === $baseUnit) {
+            $this->ensureBaseUnitConversion($companyId, $productId, $baseUnit);
+            return 1.0;
+        }
+
+        return 0.0;
+    }
+
+    private function ensureBaseUnitConversion(int $companyId, int $productId, string $baseUnit): void
+    {
+        $baseUnitCode = $this->normalizeUnitCode($baseUnit ?: 'unite');
+
+        // Check if a base conversion already exists
+        $row = $this->db->fetchOne(
+            'SELECT id FROM product_unit_conversions WHERE company_id = :company_id AND product_id = :product_id AND is_base = 1 LIMIT 1',
+            ['company_id' => $companyId, 'product_id' => $productId]
         );
 
-        $existing = $this->db->fetchOne(
+        if ($row !== null) {
+            return;
+        }
+
+        // Insert a default base unit conversion
+        $this->db->execute(
+            'INSERT INTO product_unit_conversions (product_id, company_id, unit_code, unit_label, factor_to_base, is_base, is_active, created_at)
+             VALUES (:product_id, :company_id, :unit_code, :unit_label, :factor_to_base, :is_base, :is_active, :created_at)',
+            [
+                'product_id' => $productId,
+                'company_id' => $companyId,
+                'unit_code' => $baseUnitCode,
+                'unit_label' => $baseUnitCode,
+                'factor_to_base' => 1,
+                'is_base' => 1,
+                'is_active' => 1,
+                'created_at' => date('Y-m-d H:i:s'),
+            ]
+        );
+    }
+
+    private function upsertOptionalPackagingFromPayload(int $companyId, int $productId, array $payload, string $baseUnit): void
+    {
+        if ($companyId <= 0 || $productId <= 0) {
+            return;
+        }
+
+        $unitCodeRaw = (string) ($payload['packaging_unit_code'] ?? $payload['packaging_unit'] ?? $payload['packaging_code'] ?? '');
+        $factorRaw = $payload['packaging_factor'] ?? $payload['packaging_qty'] ?? $payload['packaging_quantity'] ?? 0;
+        $unitLabelRaw = (string) ($payload['packaging_unit_label'] ?? $payload['packaging_label'] ?? $payload['packaging_unit'] ?? '');
+
+        $unitCode = $this->normalizeUnitCode($unitCodeRaw);
+        $factor = round((float) $factorRaw, 6);
+
+        if ($unitCode === '' || $factor <= 0) {
+            return;
+        }
+
+        $baseUnitCode = $this->normalizeUnitCode($baseUnit ?: 'unite');
+        if ($unitCode === $baseUnitCode) {
+            return;
+        }
+
+        $unitLabel = trim($unitLabelRaw);
+        if ($unitLabel === '') {
+            $unitLabel = $unitCode;
+        }
+
+        $row = $this->db->fetchOne(
             'SELECT id
              FROM product_unit_conversions
              WHERE company_id = :company_id
@@ -1552,37 +1768,108 @@ class Product extends Model
             [
                 'company_id' => $companyId,
                 'product_id' => $productId,
-                'unit_code' => $baseUnit,
+                'unit_code' => $unitCode,
             ]
         );
 
-        if ($existing !== null) {
+        if ($row !== null) {
             $this->db->execute(
                 'UPDATE product_unit_conversions
                  SET unit_label = :unit_label,
-                     factor_to_base = 1,
-                     is_base = 1,
+                     factor_to_base = :factor_to_base,
+                     is_base = 0,
                      is_active = 1,
                      updated_at = CURRENT_TIMESTAMP
-                 WHERE id = :id',
+                 WHERE id = :id
+                   AND company_id = :company_id',
                 [
-                    'unit_label' => substr($baseUnit, 0, 80),
-                    'id' => (int) ($existing['id'] ?? 0),
+                    'unit_label' => $unitLabel,
+                    'factor_to_base' => $factor,
+                    'id' => (int) ($row['id'] ?? 0),
+                    'company_id' => $companyId,
                 ]
             );
             return;
         }
 
         $this->db->execute(
-            'INSERT INTO product_unit_conversions (product_id, company_id, unit_code, unit_label, factor_to_base, is_base, is_active)
-             VALUES (:product_id, :company_id, :unit_code, :unit_label, 1, 1, 1)',
+            'INSERT INTO product_unit_conversions (product_id, company_id, unit_code, unit_label, factor_to_base, is_base, is_active, created_at)
+             VALUES (:product_id, :company_id, :unit_code, :unit_label, :factor_to_base, :is_base, :is_active, :created_at)',
             [
                 'product_id' => $productId,
                 'company_id' => $companyId,
-                'unit_code' => $baseUnit,
-                'unit_label' => substr($baseUnit, 0, 80),
+                'unit_code' => $unitCode,
+                'unit_label' => $unitLabel,
+                'factor_to_base' => $factor,
+                'is_base' => 0,
+                'is_active' => 1,
+                'created_at' => date('Y-m-d H:i:s'),
             ]
         );
+    }
+
+    // Résout le code d'unité de base depuis le payload de création/édition de produit
+    private function resolveBaseUnitFromPayload(array $payload): string
+    {
+        $keys = ['base_unit_code', 'base_unit', 'unit_code', 'unit', 'packaging_unit', 'default_unit'];
+        foreach ($keys as $k) {
+            if (isset($payload[$k]) && trim((string) $payload[$k]) !== '') {
+                return $this->normalizeUnitCode((string) $payload[$k]);
+            }
+        }
+
+        if (isset($payload['product']) && is_array($payload['product'])) {
+            foreach ($keys as $k) {
+                if (isset($payload['product'][$k]) && trim((string) $payload['product'][$k]) !== '') {
+                    return $this->normalizeUnitCode((string) $payload['product'][$k]);
+                }
+            }
+        }
+
+        return 'unite';
+    }
+
+    private function findLotByIdForCompany(int $companyId, int $lotId): ?array
+    {
+        if ($companyId <= 0 || $lotId <= 0) {
+            return null;
+        }
+
+        $row = $this->db->fetchOne(
+            'SELECT *
+             FROM stock_lots
+             WHERE id = :id
+               AND company_id = :company_id
+             LIMIT 1',
+            [
+                'id' => $lotId,
+                'company_id' => $companyId,
+            ]
+        );
+
+        return $row ?: null;
+    }
+
+    // Ajout: enregistre un mouvement de stock et retourne son id
+    private function appendMovement(int $companyId, int $productId, string $type, float $change, float $before, float $after, string $reason, int $userId, ?string $reference = null): int
+    {
+        $this->db->execute(
+            'INSERT INTO stock_movements (product_id, company_id, movement_type, quantity_change, quantity_before, quantity_after, reason, reference, created_by)
+             VALUES (:product_id, :company_id, :movement_type, :quantity_change, :quantity_before, :quantity_after, :reason, :reference, :created_by)',
+            [
+                'product_id' => $productId,
+                'company_id' => $companyId,
+                'movement_type' => $type,
+                'quantity_change' => round($change, 2),
+                'quantity_before' => round($before, 2),
+                'quantity_after' => round($after, 2),
+                'reason' => substr($reason, 0, 255),
+                'reference' => $reference !== null ? substr($reference, 0, 120) : null,
+                'created_by' => $userId > 0 ? $userId : null,
+            ]
+        );
+
+        return (int) $this->db->lastInsertId();
     }
 
     private function createLotForInflow(
@@ -1593,319 +1880,165 @@ class Product extends Model
         string $lotCode,
         int $userId,
         int $movementId,
-        ?string $sourceReference = null,
-        float $unitCostBase = 0.0,
-        ?string $expirationDate = null,
-        ?string $supplier = null
-    ): void {
-        $quantityBase = round($quantityBase, 6);
-        if ($quantityBase <= 0) {
-            return;
+        ?string $reference,
+        float $unitCostBase,
+        ?string $expirationDate,
+        string $supplier
+    ): int {
+        if ($companyId <= 0 || $productId <= 0) {
+            return 0;
         }
 
-        $lotCode = trim($lotCode);
-        if ($lotCode === '') {
-            $requiresManual = in_array($sourceType, ['initial_stock', 'restock_lot', 'manual'], true);
-            if ($requiresManual) {
-                throw new \InvalidArgumentException('Code lot obligatoire.');
+        $qty = round((float) $quantityBase, 6);
+        if ($qty <= 0) {
+            return 0;
+        }
+
+        $code = trim($lotCode);
+        if ($code === '') {
+            try {
+                $rand = strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
+            } catch (\Throwable $e) {
+                $rand = strtoupper(substr(uniqid('', false), -4));
             }
-            $lotCode = $this->generateLotCode($productId, $sourceType);
+            $code = 'LOT-' . date('ymd') . '-' . $rand;
         }
 
-        $normalizedSupplier = $this->normalizeShortText(trim((string) ($supplier ?? '')), 160);
+        $source = trim($sourceType);
+        if ($source === '') {
+            $source = 'manual';
+        }
+
+        $supplierValue = trim($supplier);
+        $expirationValue = $this->normalizeDate((string) ($expirationDate ?? ''));
+        $unitCost = max(0, round((float) $unitCostBase, 6));
+
         $this->db->execute(
-            'INSERT INTO stock_lots (product_id, company_id, lot_code, supplier, source_type, source_reference, quantity_initial_base, quantity_remaining_base, unit_cost_base, expiration_date, created_by)
-             VALUES (:product_id, :company_id, :lot_code, :supplier, :source_type, :source_reference, :quantity_initial_base, :quantity_remaining_base, :unit_cost_base, :expiration_date, :created_by)',
+            'INSERT INTO stock_lots (product_id, company_id, lot_code, supplier, source_type, source_reference, quantity_initial_base, quantity_remaining_base, unit_cost_base, expiration_date, opened_at, created_by)
+             VALUES (:product_id, :company_id, :lot_code, :supplier, :source_type, :source_reference, :quantity_initial_base, :quantity_remaining_base, :unit_cost_base, :expiration_date, :opened_at, :created_by)',
             [
                 'product_id' => $productId,
                 'company_id' => $companyId,
-                'lot_code' => substr($lotCode, 0, 120),
-                'supplier' => $normalizedSupplier,
-                'source_type' => substr($sourceType !== '' ? $sourceType : 'manual', 0, 40),
-                'source_reference' => $sourceReference !== null && trim($sourceReference) !== '' ? substr(trim($sourceReference), 0, 120) : null,
-                'quantity_initial_base' => $quantityBase,
-                'quantity_remaining_base' => $quantityBase,
-                'unit_cost_base' => max(0, round($unitCostBase, 6)),
-                'expiration_date' => $expirationDate,
+                'lot_code' => $code,
+                'supplier' => $supplierValue !== '' ? substr($supplierValue, 0, 160) : null,
+                'source_type' => $source,
+                'source_reference' => $reference !== null && trim($reference) !== '' ? substr((string) $reference, 0, 120) : null,
+                'quantity_initial_base' => $qty,
+                'quantity_remaining_base' => $qty,
+                'unit_cost_base' => $unitCost,
+                'expiration_date' => $expirationValue !== null ? $expirationValue : null,
+                'opened_at' => date('Y-m-d H:i:s'),
                 'created_by' => $userId > 0 ? $userId : null,
             ]
         );
 
-        $lotId = $this->db->lastInsertId();
-        $this->db->execute(
-            'INSERT INTO stock_lot_allocations (stock_movement_id, lot_id, quantity_base)
-             VALUES (:stock_movement_id, :lot_id, :quantity_base)',
-            [
-                'stock_movement_id' => $movementId,
-                'lot_id' => $lotId,
-                'quantity_base' => $quantityBase,
-            ]
-        );
-    }
+        $lotId = (int) $this->db->lastInsertId();
 
-    private function allocateOutflowToLots(int $companyId, int $productId, float $requiredQtyBase, int $movementId, int $userId): void
-    {
-        $requiredQtyBase = round($requiredQtyBase, 6);
-        if ($requiredQtyBase <= 0) {
-            return;
-        }
-
-        $openLots = $this->getOpenLots($companyId, $productId, 500);
-
-        if ($openLots === []) {
-            $existingLot = $this->db->fetchOne(
-                'SELECT id
-                 FROM stock_lots
-                 WHERE company_id = :company_id
-                   AND product_id = :product_id
-                 LIMIT 1',
-                [
-                    'company_id' => $companyId,
-                    'product_id' => $productId,
-                ]
-            );
-            if ($existingLot !== null) {
-                throw new \InvalidArgumentException('Lots perimes ou indisponibles pour ce produit.');
-            }
-            // Legacy fallback: synthesize one lot from historical stock if no lot exists yet.
-            $product = $this->db->fetchOne(
-                'SELECT quantity
-                 FROM products
-                 WHERE id = :id
-                   AND company_id = :company_id
-                 LIMIT 1',
-                [
-                    'id' => $productId,
-                    'company_id' => $companyId,
-                ]
-            );
-
-            $remaining = round((float) ($product['quantity'] ?? 0), 6);
-            if ($remaining > 0) {
-                $this->db->execute(
-                    'INSERT INTO stock_lots (product_id, company_id, lot_code, source_type, source_reference, quantity_initial_base, quantity_remaining_base, created_by)
-                     VALUES (:product_id, :company_id, :lot_code, :source_type, :source_reference, :quantity_initial_base, :quantity_remaining_base, :created_by)',
-                    [
-                        'product_id' => $productId,
-                        'company_id' => $companyId,
-                        'lot_code' => $this->generateLotCode($productId, 'legacy'),
-                        'source_type' => 'legacy',
-                        'source_reference' => 'Bootstrap lot legacy',
-                        'quantity_initial_base' => $remaining,
-                        'quantity_remaining_base' => $remaining,
-                        'created_by' => $userId > 0 ? $userId : null,
-                    ]
-                );
-                $openLots = $this->getOpenLots($companyId, $productId, 500);
-            }
-        }
-
-        $remainingToAllocate = $requiredQtyBase;
-        foreach ($openLots as $lot) {
-            if ($remainingToAllocate <= 0) {
-                break;
-            }
-
-            $lotId = (int) ($lot['id'] ?? 0);
-            $lotRemaining = round((float) ($lot['quantity_remaining_base'] ?? 0), 6);
-            if ($lotId <= 0 || $lotRemaining <= 0) {
-                continue;
-            }
-
-            $used = min($lotRemaining, $remainingToAllocate);
-            $newRemaining = round($lotRemaining - $used, 6);
-            $exhaustedAt = $newRemaining <= 0 ? date('Y-m-d H:i:s') : null;
-
-            $this->db->execute(
-                'UPDATE stock_lots
-                 SET quantity_remaining_base = :quantity_remaining_base,
-                     exhausted_at = :exhausted_at,
-                     updated_at = CURRENT_TIMESTAMP
-                 WHERE id = :id',
-                [
-                    'quantity_remaining_base' => $newRemaining,
-                    'exhausted_at' => $exhaustedAt,
-                    'id' => $lotId,
-                ]
-            );
-
+        if ($movementId > 0 && $lotId > 0) {
             $this->db->execute(
                 'INSERT INTO stock_lot_allocations (stock_movement_id, lot_id, quantity_base)
                  VALUES (:stock_movement_id, :lot_id, :quantity_base)',
                 [
                     'stock_movement_id' => $movementId,
                     'lot_id' => $lotId,
-                    'quantity_base' => round(-$used, 6),
+                    'quantity_base' => $qty,
                 ]
             );
-
-            $remainingToAllocate = round($remainingToAllocate - $used, 6);
         }
 
-        if ($remainingToAllocate > 0) {
-            throw new \InvalidArgumentException('Stock insuffisant dans les lots.');
-        }
+        return $lotId;
     }
 
-    private function ensureSkuAvailable(int $companyId, string $sku, ?int $exceptProductId): void
+    // Alloue une quantite de sortie (en base) sur les lots ouverts du produit.
+    private function allocateOutflowToLots(int $companyId, int $productId, float $requiredBaseQty, int $movementId, int $userId): void
     {
-        if ($sku === '') {
+        $remaining = round((float) $requiredBaseQty, 6);
+        if ($remaining <= 0) {
             return;
         }
 
-        $params = [
-            'company_id' => $companyId,
-            'sku' => $sku,
-        ];
-        $sql = 'SELECT id
-                FROM products
-                WHERE company_id = :company_id
-                  AND sku = :sku
-                  AND is_active = 1';
-        if ($exceptProductId !== null) {
-            $sql .= ' AND id <> :id';
-            $params['id'] = $exceptProductId;
-        }
-        $sql .= ' LIMIT 1';
+        // Récupère un grand nombre de lots ouverts (inclure périmés si besoin)
+        $lots = $this->getOpenLots($companyId, $productId, 500, true);
 
-        $duplicate = $this->db->fetchOne($sql, $params);
-        if ($duplicate !== null) {
-            throw new \InvalidArgumentException('SKU deja utilise.');
-        }
-    }
+        $pdo = $this->db->getConnection();
 
-    private function appendMovement(
-        int $companyId,
-        int $productId,
-        string $type,
-        float $change,
-        float $before,
-        float $after,
-        string $reason,
-        int $userId,
-        ?string $reference
-    ): int {
-        $this->db->execute(
-            'INSERT INTO stock_movements (product_id, company_id, movement_type, quantity_change, quantity_before, quantity_after, reason, reference, created_by)
-             VALUES (:product_id, :company_id, :movement_type, :quantity_change, :quantity_before, :quantity_after, :reason, :reference, :created_by)',
-            [
-                'product_id' => $productId,
+        foreach ($lots as $lot) {
+            if ($remaining <= 0) {
+                break;
+            }
+            $lotId = (int) ($lot['id'] ?? 0);
+            $avail = round((float) ($lot['quantity_remaining_base'] ?? 0), 6);
+            if ($lotId <= 0 || $avail <= 0) {
+                continue;
+            }
+
+            $take = min($avail, $remaining);
+            if ($take <= 0) {
+                continue;
+            }
+
+            // Mettre a jour la quantite restante du lot
+            $newRemaining = round($avail - $take, 6);
+            $params = [
+                'id' => $lotId,
                 'company_id' => $companyId,
-                'movement_type' => $type,
-                'quantity_change' => round($change, 6),
-                'quantity_before' => round($before, 6),
-                'quantity_after' => round($after, 6),
-                'reason' => $reason !== '' ? substr($reason, 0, 255) : null,
-                'reference' => ($reference ?? '') !== '' ? substr((string) $reference, 0, 120) : null,
-                'created_by' => $userId > 0 ? $userId : null,
-            ]
-        );
+                'new_remaining' => $newRemaining,
+                'now' => date('Y-m-d H:i:s'),
+            ];
 
-        return $this->db->lastInsertId();
+            if ($newRemaining <= 0) {
+                // exhaustion
+                $this->db->execute(
+                    'UPDATE stock_lots
+                     SET quantity_remaining_base = :new_remaining,
+                         exhausted_at = :now,
+                         updated_at = :now
+                     WHERE id = :id
+                       AND company_id = :company_id',
+                    $params
+                );
+            } else {
+                $this->db->execute(
+                    'UPDATE stock_lots
+                     SET quantity_remaining_base = :new_remaining,
+                         updated_at = :now
+                     WHERE id = :id
+                       AND company_id = :company_id',
+                    $params
+                );
+            }
+
+            // Inserer allocation negatif (sortie)
+            if ($movementId > 0) {
+                $this->db->execute(
+                    'INSERT INTO stock_lot_allocations (stock_movement_id, lot_id, quantity_base)
+                     VALUES (:stock_movement_id, :lot_id, :quantity_base)',
+                    [
+                        'stock_movement_id' => $movementId,
+                        'lot_id' => $lotId,
+                        'quantity_base' => round(-$take, 6),
+                    ]
+                );
+            }
+
+            $remaining = round($remaining - $take, 6);
+        }
+
+        if ($remaining > 0.000000) {
+            // Si on n'a pas pu allouer toute la quantite, lever une exception
+            throw new \InvalidArgumentException('Allocation lots impossible: stock insuffisant.');
+        }
     }
 
-    private function normalizeColorHex(string $value): ?string
+    // Ajout: formate un nombre en string compacte sans zéros inutiles (ex: 1.500000 -> "1.5")
+    private function trimNumeric($value, int $maxDecimals = 6): string
     {
-        $value = trim($value);
-        if ($value === '') {
-            return null;
-        }
-
-        if (preg_match('/^#[0-9A-Fa-f]{6}$/', $value) === 1) {
-            return strtoupper($value);
-        }
-
-        return null;
+        $num = (float) $value;
+        // Format with fixed decimals then trim trailing zeros and trailing dot
+        $formatted = number_format($num, $maxDecimals, '.', '');
+        $trimmed = rtrim(rtrim($formatted, '0'), '.');
+        return $trimmed === '' ? '0' : $trimmed;
     }
 
-    private function normalizeShortText(string $value, int $maxLength): ?string
-    {
-        $value = trim($value);
-        if ($value === '') {
-            return null;
-        }
-
-        return substr($value, 0, max(1, $maxLength));
-    }
-
-    private function normalizeDate(string $value): ?string
-    {
-        $value = trim($value);
-        if ($value === '') {
-            return null;
-        }
-
-        $date = date_create($value);
-        if ($date === false) {
-            return null;
-        }
-
-        return $date->format('Y-m-d');
-    }
-
-    private function generateNextSku(int $companyId, string $name): string
-    {
-        $slug = strtoupper((string) preg_replace('/[^A-Za-z0-9]+/', '', $name));
-        if ($slug === '') {
-            $slug = 'PRD';
-        }
-        $prefix = substr($slug, 0, 4);
-        if (strlen($prefix) < 3) {
-            $prefix = str_pad($prefix, 3, 'X');
-        }
-
-        $base = $prefix . '-' . date('ym') . '-';
-        $row = $this->db->fetchOne(
-            'SELECT sku
-             FROM products
-             WHERE company_id = :company_id
-               AND sku LIKE :sku_like
-             ORDER BY id DESC
-             LIMIT 1',
-            [
-                'company_id' => $companyId,
-                'sku_like' => $base . '%',
-            ]
-        );
-
-        $next = 1;
-        $lastSku = trim((string) ($row['sku'] ?? ''));
-        if ($lastSku !== '' && preg_match('/^' . preg_quote($base, '/') . '(\d{4,})$/', $lastSku, $matches) === 1) {
-            $next = ((int) $matches[1]) + 1;
-        }
-
-        return $base . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
-    }
-
-    private function normalizeUnitCode(string $value): string
-    {
-        $value = strtolower(trim($value));
-        if ($value === '') {
-            return '';
-        }
-
-        $value = (string) preg_replace('/[^a-z0-9_\-]/', '', $value);
-        if ($value === '') {
-            return '';
-        }
-
-        return substr($value, 0, 30);
-    }
-
-    private function trimNumeric(float $value): string
-    {
-        $formatted = number_format($value, 6, '.', '');
-        $formatted = rtrim($formatted, '0');
-        return rtrim($formatted, '.');
-    }
-
-    private function generateLotCode(int $productId, string $sourceType): string
-    {
-        $prefix = strtoupper(substr((string) preg_replace('/[^A-Za-z0-9]+/', '', $sourceType), 0, 4));
-        if ($prefix === '') {
-            $prefix = 'LOT';
-        }
-
-        return sprintf('%s-P%d-%s', $prefix, $productId, date('ymdHis'));
-    }
 }
+// End of file

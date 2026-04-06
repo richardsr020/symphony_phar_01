@@ -241,14 +241,19 @@ class InvoicesController extends Controller
             $error = $this->resolveInvalidPayloadErrorCode($exception);
             $this->redirect('/invoices/create?error=' . $error);
         } catch (\Throwable $exception) {
+            // generate a short error id to correlate UI message with logs
+            $errId = substr(sha1($exception->getMessage() . microtime(true)), 0, 8);
             AppLogger::error('Invoice create failed', [
                 'company_id' => $companyId,
                 'user_id' => $userId,
                 'message' => $exception->getMessage(),
                 'file' => $exception->getFile(),
                 'line' => $exception->getLine(),
+                'err_id' => $errId,
+                'trace' => $exception->getTraceAsString(),
             ]);
-            $this->redirect('/invoices/create?error=invoice_create_failed');
+            // include err id in redirect so it can be reported for debugging
+            $this->redirect('/invoices/create?error=invoice_create_failed&err=' . $errId);
         }
     }
 
@@ -524,7 +529,7 @@ class InvoicesController extends Controller
             'title' => 'PDF vente ' . (string) ($invoice['invoice_number'] ?? ''),
             'invoice' => $invoice,
             'company' => (new Company())->findById($companyId) ?? [],
-            'autoPrint' => true,
+            'autoDownload' => true,
         ]);
     }
 

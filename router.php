@@ -54,6 +54,8 @@ class Router {
         $this->addRoute('POST', '/transactions/update/{id}', 'TransactionsController@update', ['auth']);
         $this->addRoute('POST', '/transactions/delete/{id}', 'TransactionsController@delete', ['auth']);
         $this->addRoute('GET', '/transactions/view/{id}', 'TransactionsController@view', ['auth']);
+        $this->addRoute('GET', '/transactions/preview/{id}', 'TransactionsController@preview', ['auth']);
+        $this->addRoute('GET', '/transactions/pdf/{id}', 'TransactionsController@generatePDF', ['auth']);
         
         // Factures
         $this->addRoute('GET', '/invoices', 'InvoicesController@index', ['auth']);
@@ -79,6 +81,7 @@ class Router {
 
         // Stock produits
         $this->addRoute('GET', '/stock', 'StockController@index', ['auth']);
+        $this->addRoute('GET', '/stock/alerts', 'StockController@alerts', ['auth']);
         $this->addRoute('POST', '/stock/store', 'StockController@store', ['auth']);
         $this->addRoute('POST', '/stock/add-lot', 'StockController@addLot', ['auth']);
         $this->addRoute('POST', '/stock/update/{id}', 'StockController@update', ['auth']);
@@ -90,6 +93,9 @@ class Router {
         $this->addRoute('GET', '/stock/lots/export', 'StockController@exportLots', ['auth']);
         $this->addRoute('POST', '/stock/delete-bulk', 'StockController@deleteBulk', ['auth']);
         $this->addRoute('POST', '/stock/lots/delete-bulk', 'StockController@deleteLotsBulk', ['auth']);
+
+        // Debug temporaire (a supprimer apres usage)
+        $this->addRoute('GET', '/debug/product', 'DebugController@product', ['auth']);
         
         // Rapports
         $this->addRoute('GET', '/reports', 'ReportsController@index', ['auth']);

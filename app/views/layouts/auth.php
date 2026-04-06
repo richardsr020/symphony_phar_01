@@ -16,15 +16,11 @@ $asset = static function (string $path) use ($basePath): string {
 
 <title><?= $title ?? 'Connexion' ?> - Kombiphar</title>
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Parisienne&display=swap" rel="stylesheet">
+<!-- Use system fonts by default to support offline usage. To add local webfonts, place them in public/fonts and update public/css/style.css -->
 
 <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/style.css'), ENT_QUOTES, 'UTF-8') ?>">
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/Font-Awesome-7.x/css/all.min.css'), ENT_QUOTES, 'UTF-8') ?>">
 
 <style>
 

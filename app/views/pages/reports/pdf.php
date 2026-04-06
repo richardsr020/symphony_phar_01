@@ -502,34 +502,19 @@ body {
 }
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
 <?php if ($autoDownload): ?>
 <script>
 window.addEventListener('load', async () => {
-    if (typeof window.html2pdf !== 'function') {
-        return;
-    }
     const sheet = document.querySelector('.report-sheet');
     if (!sheet) {
         return;
     }
     const fileName = <?= json_encode('rapport-' . preg_replace('/[^a-z0-9]+/i', '-', strtolower($reportTitle)) . '.pdf', JSON_UNESCAPED_UNICODE) ?>;
-    await window.html2pdf()
-        .set({
-            margin: 0,
-            filename: fileName,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: {
-                scale: 2,
-                useCORS: true,
-                backgroundColor: '#ffffff',
-            },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-            pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-        })
-        .from(sheet)
-        .save();
+    await window.SymphonyPdfExport.download({
+        sheet,
+        filename: fileName,
+        autoDownload: true,
+    });
 });
 </script>
 <?php endif; ?>

@@ -107,7 +107,7 @@ $exportSummaryUrl = '/suivi-clients/export-summary' . ($exportSummaryQuery !== [
                 <h3><i class="fa-solid fa-user-plus"></i> Nouveau client</h3>
                 <button type="button" class="modal-close" id="modal-close-btn">&times;</button>
             </div>
-            <form method="POST" action="/clients/store" id="client-create-form">
+            <form method="POST" action="/clients/store" id="client-create-form" novalidate>
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                 <div class="modal-body">
                     <div class="form-group">
@@ -656,6 +656,23 @@ $exportSummaryUrl = '/suivi-clients/export-summary' . ($exportSummaryQuery !== [
     opacity: 0.6;
 }
 
+.form-group.has-error .form-label {
+    color: #dc2626;
+}
+
+.form-input.input-error {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.field-error-message {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #dc2626;
+}
+
 .form-hint {
     font-size: 12px;
     color: var(--text-secondary);
@@ -1122,6 +1139,46 @@ $exportSummaryUrl = '/suivi-clients/export-summary' . ($exportSummaryQuery !== [
     const closeBtns = [document.getElementById('modal-close-btn'), document.getElementById('modal-cancel-btn')];
     const form = document.getElementById('client-create-form');
     const shouldOpen = <?= $flashErrorMessage !== '' ? 'true' : 'false' ?>;
+
+    const resolveErrorContainer = (field) => {
+        if (!field) return null;
+        return field.closest('.form-group') || field.parentElement;
+    };
+
+    const clearFieldError = (field) => {
+        if (!field) return;
+        field.classList.remove('input-error');
+        const container = resolveErrorContainer(field);
+        if (!container) return;
+        container.classList.remove('has-error');
+        const message = container.querySelector('.field-error-message');
+        if (message) {
+            message.remove();
+        }
+    };
+
+    const setFieldError = (field, message) => {
+        if (!field) return;
+        field.classList.add('input-error');
+        const container = resolveErrorContainer(field);
+        if (!container) return;
+        container.classList.add('has-error');
+        let messageNode = container.querySelector('.field-error-message');
+        if (!messageNode) {
+            messageNode = document.createElement('small');
+            messageNode.className = 'field-error-message';
+            container.appendChild(messageNode);
+        }
+        messageNode.textContent = message;
+    };
+
+    const focusField = (field) => {
+        if (!field || typeof field.focus !== 'function') return;
+        field.focus();
+        if (typeof field.scrollIntoView === 'function') {
+            field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    };
     
     const openModal = () => {
         if (!modalOverlay) return;
@@ -1133,7 +1190,10 @@ $exportSummaryUrl = '/suivi-clients/export-summary' . ($exportSummaryQuery !== [
         if (!modalOverlay) return;
         modalOverlay.classList.remove('active');
         document.body.style.overflow = '';
-        if (form) form.reset();
+        if (form) {
+            form.reset();
+            form.querySelectorAll('.form-input').forEach((field) => clearFieldError(field));
+        }
     };
     
     if (toggleBtn) {
@@ -1163,12 +1223,63 @@ $exportSummaryUrl = '/suivi-clients/export-summary' . ($exportSummaryQuery !== [
     }
     
     if (form) {
+        const nameInput = form.querySelector('input[name="name"]');
+        const phoneInput = form.querySelector('input[name="phone"]');
+        const emailInput = form.querySelector('input[name="email"]');
+
+        const validateNamePhone = () => {
+            const name = String(nameInput?.value || '').trim();
+            const phone = String(phoneInput?.value || '').trim();
+
+            clearFieldError(nameInput);
+            clearFieldError(phoneInput);
+
+            if (name !== '' || phone !== '') {
+                return true;
+            }
+
+            setFieldError(nameInput, 'Renseignez au moins un nom ou un telephone.');
+            setFieldError(phoneInput, 'Renseignez au moins un nom ou un telephone.');
+            return false;
+        };
+
+        const validateEmail = () => {
+            if (!emailInput) {
+                return true;
+            }
+            const email = String(emailInput.value || '').trim();
+            if (email === '') {
+                clearFieldError(emailInput);
+                return true;
+            }
+            if (!emailInput.checkValidity()) {
+                setFieldError(emailInput, 'Adresse email invalide.');
+                return false;
+            }
+            clearFieldError(emailInput);
+            return true;
+        };
+
+        [nameInput, phoneInput].forEach((field) => {
+            if (!field) {
+                return;
+            }
+            field.addEventListener('input', validateNamePhone);
+            field.addEventListener('change', validateNamePhone);
+        });
+
+        if (emailInput) {
+            emailInput.addEventListener('input', validateEmail);
+            emailInput.addEventListener('change', validateEmail);
+        }
+
         form.addEventListener('submit', function(e) {
-            const name = form.querySelector('input[name="name"]').value.trim();
-            const phone = form.querySelector('input[name="phone"]').value.trim();
-            if (!name && !phone) {
+            const isNamePhoneValid = validateNamePhone();
+            const isEmailValid = validateEmail();
+
+            if (!isNamePhoneValid || !isEmailValid) {
                 e.preventDefault();
-                alert('Veuillez renseigner au moins un nom ou un téléphone.');
+                focusField(form.querySelector('.input-error'));
             }
         });
     }

@@ -65,7 +65,7 @@ class ReceiptsController extends Controller
             'title' => 'PDF recu ' . (string) ($receipt['receipt_number'] ?? ''),
             'receipt' => $receipt,
             'company' => (new Company())->findById($companyId) ?? [],
-            'autoPrint' => true,
+            'autoDownload' => true,
         ]);
     }
 }

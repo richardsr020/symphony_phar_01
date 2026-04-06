@@ -28,19 +28,30 @@ $canManageTransactions = $canManageTransactions ?? true;
 $canManageInvoices = $canManageInvoices ?? true;
 $canAccessSettings = $canAccessSettings ?? true;
 $flashError = $flashError ?? '';
-$alertSummaryItems = [];
-if ($alerts !== []) {
-    foreach (array_slice($alerts, 0, 3) as $alert) {
-        $title = trim((string) ($alert['title'] ?? 'Alerte'));
-        $message = trim((string) ($alert['message'] ?? ''));
-        $chunk = $title;
-        if ($message !== '') {
-            $chunk .= ' - ' . $message;
-        }
-        $alertSummaryItems[] = [
-            'label' => $chunk,
-            'severity' => (string) ($alert['severity'] ?? 'warning'),
-        ];
+$stockAlertCount = 0;
+$outOfStockCount = 0;
+$lowStockCount = 0;
+$expiryAlertCount = 0;
+$criticalAlertCount = 0;
+foreach ($alerts as $alert) {
+    $type = (string) ($alert['type'] ?? '');
+    $statusKey = (string) ($alert['status_key'] ?? '');
+    $severity = (string) ($alert['severity'] ?? '');
+
+    if (in_array($type, ['stock', 'expiry'], true)) {
+        $stockAlertCount++;
+    }
+    if ($statusKey === 'out_of_stock') {
+        $outOfStockCount++;
+    }
+    if ($statusKey === 'low_stock') {
+        $lowStockCount++;
+    }
+    if ($type === 'expiry') {
+        $expiryAlertCount++;
+    }
+    if ($severity === 'critical') {
+        $criticalAlertCount++;
     }
 }
 
@@ -132,16 +143,46 @@ $formatCurrency = static function ($value): string {
 
     <?php if ($alerts !== []): ?>
     <div class="alert-banner">
-        <div class="alert-banner-title">
-            Alertes & avertissements (<?= count($alerts) ?>)
+        <div class="alert-banner-head">
+            <div>
+                <div class="alert-banner-title">
+                    Alertes & avertissements (<?= count($alerts) ?>)
+                </div>
+                <div class="alert-banner-summary">
+                    <?= htmlspecialchars(
+                        $stockAlertCount > 0
+                            ? 'Surveillez vos alertes stock sans afficher toutes les lignes ici.'
+                            : 'Des alertes actives demandent votre attention.',
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ) ?>
+                </div>
+            </div>
+            <?php if ($stockAlertCount > 0): ?>
+            <a class="btn-icon alert-banner-detail-btn" href="/stock/alerts" title="Voir le detail des alertes stock" aria-label="Voir le detail des alertes stock">
+                <i class="fa-solid fa-circle-info"></i>
+            </a>
+            <?php endif; ?>
         </div>
         <div class="alert-banner-items">
-            <?php foreach ($alertSummaryItems as $item): ?>
-            <?php $severity = strtolower((string) ($item['severity'] ?? 'warning')); ?>
-            <span class="alert-banner-item alert-banner-item-<?= htmlspecialchars($severity, ENT_QUOTES, 'UTF-8') ?>">
-                <?= htmlspecialchars((string) ($item['label'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
-            </span>
-            <?php endforeach; ?>
+            <?php if ($criticalAlertCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-critical">Critiques: <?= (int) $criticalAlertCount ?></span>
+            <?php endif; ?>
+            <?php if ($outOfStockCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-critical">Ruptures: <?= (int) $outOfStockCount ?></span>
+            <?php endif; ?>
+            <?php if ($lowStockCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-warning">Stock bas: <?= (int) $lowStockCount ?></span>
+            <?php endif; ?>
+            <?php if ($expiryAlertCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-warning">Expirations: <?= (int) $expiryAlertCount ?></span>
+            <?php endif; ?>
+            <?php if ($stockAlertCount === 0): ?>
+            <span class="alert-banner-item">Alertes actives: <?= (int) count($alerts) ?></span>
+            <?php endif; ?>
+            <?php if ($stockAlertCount > 0): ?>
+            <span class="alert-banner-item">Voir la page detail pour chaque message</span>
+            <?php endif; ?>
         </div>
     </div>
     <?php endif; ?>
@@ -335,9 +376,19 @@ $formatCurrency = static function ($value): string {
     border-radius: var(--radius-md);
     margin-bottom: 16px;
 }
+.alert-banner-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
 .alert-banner-title {
     font-size: 13px;
     font-weight: 600;
+}
+.alert-banner-summary {
+    font-size: 12px;
+    opacity: 0.9;
 }
 .alert-banner-items {
     display: flex;
@@ -357,6 +408,11 @@ $formatCurrency = static function ($value): string {
 .alert-banner-item-warning {
     background: rgba(234, 179, 8, 0.18);
     color: #92400e;
+}
+.alert-banner-detail-btn {
+    color: #92400e;
+    border-color: rgba(146, 64, 14, 0.2);
+    background: rgba(255, 255, 255, 0.45);
 }
 
 .welcome-banner {

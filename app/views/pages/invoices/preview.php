@@ -4,6 +4,7 @@ $company = $company ?? [];
 $items = $invoice['items'] ?? [];
 $invoiceId = (int) ($invoice['id'] ?? 0);
 $autoPrint = (bool) ($autoPrint ?? false);
+$autoDownload = (bool) ($autoDownload ?? false);
 $paid = (float) ($invoice['paid_amount'] ?? 0);
 $total = (float) ($invoice['total'] ?? 0);
 $remaining = max($total - $paid, 0);
@@ -26,6 +27,7 @@ if (!empty($invoice['created_at'])) {
         $issueTime = date('H:i', $parsedIssueTime);
     }
 }
+$downloadUrl = $invoiceId > 0 ? '/invoices/pdf/' . $invoiceId : '';
 ?>
 
 <div class="invoice-preview-page">
@@ -177,8 +179,6 @@ if (!empty($invoice['created_at'])) {
 }
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
 <?php if ($autoPrint): ?>
 <script>
 window.addEventListener('load', () => {
@@ -193,6 +193,8 @@ window.addEventListener('load', () => {
 (() => {
     const invoiceId = <?= (int) $invoiceId ?>;
     const invoiceNumber = <?= json_encode((string) ($invoice['invoice_number'] ?? 'facture'), JSON_UNESCAPED_UNICODE) ?>;
+    const autoDownload = <?= $autoDownload ? 'true' : 'false' ?>;
+    const downloadUrl = <?= json_encode($downloadUrl, JSON_UNESCAPED_UNICODE) ?>;
     const downloadBtn = document.getElementById('download-pdf-btn');
     const sheet = document.querySelector('.a4-sheet');
     const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');
@@ -234,42 +236,28 @@ window.addEventListener('load', () => {
         return `facture-${normalized || 'document'}.pdf`;
     };
 
+    const triggerDownload = async (allowRouteFallback = false) => {
+        await window.SymphonyPdfExport.download({
+            button: downloadBtn,
+            sheet,
+            filename: buildFileName(),
+            notify,
+            fallbackUrl: allowRouteFallback ? downloadUrl : '',
+            autoDownload,
+            onSuccess: markDownloaded,
+        });
+    };
+
     downloadBtn.addEventListener('click', async () => {
-        if (typeof window.html2pdf !== 'function') {
-            notify('Le module de generation PDF est indisponible pour le moment.', 'error');
-            return;
-        }
-
-        const initialHtml = downloadBtn.innerHTML;
-        downloadBtn.disabled = true;
-        downloadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generation...';
-
-        try {
-            await window.html2pdf()
-                .set({
-                    margin: 0,
-                    filename: buildFileName(),
-                    image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: {
-                        scale: 2,
-                        useCORS: true,
-                        backgroundColor: '#ffffff',
-                    },
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-                })
-                .from(sheet)
-                .save();
-
-            await markDownloaded();
-            notify('PDF telecharge avec succes.', 'success');
-        } catch (error) {
-            console.error('PDF download failed', error);
-            notify('Impossible de telecharger le PDF pour le moment.', 'error');
-        } finally {
-            downloadBtn.disabled = false;
-            downloadBtn.innerHTML = initialHtml;
-        }
+        await triggerDownload(true);
     });
+
+    if (autoDownload) {
+        window.addEventListener('load', () => {
+            window.setTimeout(() => {
+                void triggerDownload(false);
+            }, 120);
+        }, { once: true });
+    }
 })();
 </script>

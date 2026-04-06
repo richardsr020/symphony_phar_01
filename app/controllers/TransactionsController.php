@@ -9,6 +9,7 @@ use App\Core\Session;
 use App\Models\Account;
 use App\Models\Dashboard;
 use App\Models\Transaction;
+use App\Models\Company;
 
 class TransactionsController extends Controller
 {
@@ -67,11 +68,6 @@ class TransactionsController extends Controller
 
         $summary['balance'] = $summary['total_debit'] - $summary['total_credit'];
 
-        $selectedTransaction = null;
-        $viewId = isset($_GET['view']) ? (int) $_GET['view'] : 0;
-        if ($viewId > 0) {
-            $selectedTransaction = $this->transactionModel->findByIdForCompany($companyId, $viewId);
-        }
         $editId = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
         $editingTransaction = null;
         if ($editId > 0) {
@@ -94,7 +90,6 @@ class TransactionsController extends Controller
             'nextTransactionReference' => $this->transactionModel->generateNextReference($companyId, date('Y-m-d')),
             'showCreateForm' => (($_GET['mode'] ?? '') === 'create'),
             'editingTransaction' => $editingTransaction,
-            'selectedTransaction' => $selectedTransaction,
             'pagination' => $pagination,
             'flashSuccess' => $this->resolveSuccess((string) ($_GET['success'] ?? '')),
             'flashError' => $editingBlocked ? $this->resolveError('transaction_locked') : $this->resolveError((string) ($_GET['error'] ?? '')),
@@ -208,7 +203,7 @@ class TransactionsController extends Controller
                 'type' => (string) ($_POST['type'] ?? ''),
             ]);
             $successCode = $payloadType === 'debt_payment' ? 'debt_payment_recorded' : 'transaction_created';
-            $this->redirect('/transactions?success=' . $successCode . '&view=' . $transactionId);
+            $this->redirect('/transactions?success=' . $successCode);
         } catch (\InvalidArgumentException $exception) {
             $error = $this->resolveInvalidPayloadErrorCode($exception);
             $this->redirect('/transactions?mode=create&error=' . $error);
@@ -251,7 +246,7 @@ class TransactionsController extends Controller
                 'amount' => (float) ($_POST['amount'] ?? 0),
                 'type' => (string) ($_POST['type'] ?? ''),
             ]);
-            $this->redirect('/transactions?success=transaction_updated&view=' . $transactionId);
+            $this->redirect('/transactions?success=transaction_updated');
         } catch (\InvalidArgumentException $exception) {
             $error = $this->resolveInvalidPayloadErrorCode($exception);
             $this->redirect('/transactions?edit=' . $transactionId . '&error=' . $error);
@@ -292,12 +287,100 @@ class TransactionsController extends Controller
     public function view($id): void
     {
         $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
         $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+        $transactionId = (int) $id;
+
+        if ($companyId <= 0 || $transactionId <= 0) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
         if (!RolePermissions::canAccessTransactions($role)) {
             $this->redirect('/dashboard?error=transactions_forbidden');
         }
 
-        $this->redirect('/transactions?view=' . urlencode((string) $id));
+        $transaction = $this->transactionModel->findByIdForCompany($companyId, $transactionId);
+        if ($transaction === null) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
+
+        $previewPath = $this->resolvePreviewPath($transactionId, (string) ($transaction['type'] ?? ''));
+        if ($previewPath === null) {
+            $this->redirect('/transactions?error=preview_not_available');
+        }
+
+        $this->redirect($previewPath);
+    }
+
+    public function preview($id): void
+    {
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+        $transactionId = (int) $id;
+
+        if ($companyId <= 0 || $transactionId <= 0) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
+        if (!RolePermissions::canAccessTransactions($role)) {
+            $this->redirect('/dashboard?error=transactions_forbidden');
+        }
+
+        $transaction = $this->transactionModel->findByIdForCompany($companyId, $transactionId);
+        if ($transaction === null) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
+
+        // Only allow printable receipts for simple income/expense transactions
+        $type = (string) ($transaction['type'] ?? '');
+        if (!in_array($type, ['income', 'expense'], true)) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
+
+        $receipt = $this->buildPrintableReceipt($transactionId, $transaction);
+
+        $company = (new Company())->findById($companyId) ?? [];
+
+        $this->renderMain('transactions/preview', [
+            'title' => ($type === 'expense' ? 'Bon de sortie caisse' : 'Bon d\'entree caisse') . ' ' . ($receipt['receipt_number'] ?? ''),
+            'receipt' => $receipt,
+            'company' => $company,
+        ]);
+    }
+
+    public function generatePDF($id): void
+    {
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+        $transactionId = (int) $id;
+
+        if ($companyId <= 0 || $transactionId <= 0) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
+        if (!RolePermissions::canAccessTransactions($role)) {
+            $this->redirect('/dashboard?error=transactions_forbidden');
+        }
+
+        $transaction = $this->transactionModel->findByIdForCompany($companyId, $transactionId);
+        if ($transaction === null) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
+
+        $type = (string) ($transaction['type'] ?? '');
+        if (!in_array($type, ['income', 'expense'], true)) {
+            $this->redirect('/transactions?error=receipt_not_found');
+        }
+
+        $receipt = $this->buildPrintableReceipt($transactionId, $transaction);
+
+        $company = (new Company())->findById($companyId) ?? [];
+
+        $this->renderMain('transactions/preview', [
+            'title' => ($type === 'expense' ? 'PDF bon de sortie caisse' : 'PDF bon d\'entree caisse') . ' ' . ($receipt['receipt_number'] ?? ''),
+            'receipt' => $receipt,
+            'company' => $company,
+            'autoDownload' => true,
+        ]);
     }
 
     private function resolveSuccess(string $code): string
@@ -323,6 +406,7 @@ class TransactionsController extends Controller
             'debt_no_invoices' => 'Aucune facture impayee pour ce client.',
             'debt_amount_exceeds' => 'Le montant depasse la dette totale du client.',
             'transaction_locked' => 'Cette transaction ne peut pas etre modifiee.',
+            'preview_not_available' => 'Aucun apercu imprimable disponible pour ce type de transaction.',
             'transaction_create_failed' => 'Impossible d\'enregistrer la transaction pour le moment.',
             'transaction_update_failed' => 'Impossible de mettre a jour la transaction pour le moment.',
             'transaction_not_found' => 'Transaction introuvable.',
@@ -352,5 +436,44 @@ class TransactionsController extends Controller
         }
 
         return 'invalid_payload';
+    }
+
+    private function resolvePreviewPath(int $transactionId, string $type): ?string
+    {
+        if ($type === 'debt_payment') {
+            return '/receipts/preview/' . $transactionId;
+        }
+
+        if (in_array($type, ['income', 'expense'], true)) {
+            return '/transactions/preview/' . $transactionId;
+        }
+
+        return null;
+    }
+
+    private function buildPrintableReceipt(int $transactionId, array $transaction): array
+    {
+        $entries = is_array($transaction['entries'] ?? null) ? $transaction['entries'] : [];
+        $totalDebit = 0.0;
+        $totalCredit = 0.0;
+        foreach ($entries as $entry) {
+            $totalDebit += (float) ($entry['debit'] ?? 0);
+            $totalCredit += (float) ($entry['credit'] ?? 0);
+        }
+
+        $type = (string) ($transaction['type'] ?? '');
+        $totalAmount = $type === 'income' ? $totalDebit : $totalCredit;
+
+        return [
+            'transaction_id' => $transactionId,
+            'transaction_date' => (string) ($transaction['transaction_date'] ?? ''),
+            'created_at' => (string) ($transaction['created_at'] ?? ''),
+            'receipt_number' => (string) ($transaction['reference'] ?? ''),
+            'type' => $type,
+            'description' => (string) ($transaction['description'] ?? ''),
+            'created_by_name' => (string) ($transaction['created_by_name'] ?? ''),
+            'total_amount' => round($totalAmount, 2),
+            'entries' => $entries,
+        ];
     }
 }

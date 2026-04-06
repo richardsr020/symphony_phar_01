@@ -583,12 +583,14 @@ class Invoice extends Model
         $invoiceDate = $this->normalizeDate((string) ($payload['issue_date'] ?? ''));
         $dueDate = $this->normalizeDate((string) ($payload['due_date'] ?? ''));
         [$customerName, $customerPhone, $customerTaxId, $customerAddress, $clientType] = $this->resolveClientFromPayload($payload);
-        $status = $this->normalizeStatus((string) ($payload['status'] ?? 'draft'));
+        $requestedStatus = $this->normalizeStatus((string) ($payload['status'] ?? 'draft'));
+        $status = $requestedStatus;
         $invoiceType = $this->normalizeInvoiceType((string) ($payload['invoice_type'] ?? ($existing['invoice_type'] ?? 'product')));
 
-        if (!in_array($status, ['draft', 'sent'], true)) {
-            $status = 'draft';
+        if (!in_array($requestedStatus, ['draft', 'sent', 'paid'], true)) {
+            $requestedStatus = 'draft';
         }
+        $status = $requestedStatus === 'paid' ? 'sent' : $requestedStatus;
 
         $invoiceNumber = trim((string) ($existing['invoice_number'] ?? ''));
         if ($invoiceNumber === '') {
@@ -621,9 +623,15 @@ class Invoice extends Model
             $paidAmount = $total;
             $deposit = $total;
             $status = 'paid';
+        } elseif ($requestedStatus === 'paid') {
+            $paidAmount = $total;
+            $deposit = $total;
+            $status = 'paid';
+        } elseif ($status !== 'draft') {
+            $status = $paidAmount >= ($total - 0.009) ? 'paid' : 'sent';
         }
-        $remaining = max($total - $deposit, 0);
-        if ($clientType === 'anonymous' || $remaining <= 0.009) {
+        $remaining = max($total - $paidAmount, 0);
+        if ($clientType === 'anonymous' || $status === 'paid' || $remaining <= 0.009) {
             $dueDate = $invoiceDate;
         }
         $notes = $this->buildNotes($payload, $discountType, $discountRaw, $deposit, $remaining);
@@ -748,9 +756,22 @@ class Invoice extends Model
             return false;
         }
 
+        $paidAmount = round((float) ($invoice['paid_amount'] ?? 0), 2);
+        $total = round((float) ($invoice['total'] ?? 0), 2);
+        $newStatus = $paidAmount >= ($total - 0.009) ? 'paid' : 'sent';
+
         $this->db->execute(
-            'UPDATE invoices SET status = :status WHERE id = :id AND company_id = :company_id',
-            ['status' => 'sent', 'id' => $invoiceId, 'company_id' => $companyId]
+            'UPDATE invoices
+             SET status = :status,
+                 paid_date = CASE WHEN :status_paid = :status THEN CURRENT_DATE ELSE paid_date END
+             WHERE id = :id
+               AND company_id = :company_id',
+            [
+                'status' => $newStatus,
+                'status_paid' => 'paid',
+                'id' => $invoiceId,
+                'company_id' => $companyId,
+            ]
         );
 
         $updated = $this->findByIdForCompany($companyId, $invoiceId);
@@ -927,7 +948,8 @@ class Invoice extends Model
         $invoiceDate = $this->normalizeDate((string) ($payload['issue_date'] ?? ''));
         $dueDate = $this->normalizeDate((string) ($payload['due_date'] ?? ''));
         [$customerName, $customerPhone, $customerTaxId, $customerAddress, $clientType] = $this->resolveClientFromPayload($payload);
-        $status = $this->normalizeStatus((string) ($payload['status'] ?? 'sent'));
+        $requestedStatus = $this->normalizeStatus((string) ($payload['status'] ?? 'sent'));
+        $status = $requestedStatus;
         $invoiceType = $this->normalizeInvoiceType((string) ($payload['invoice_type'] ?? 'product'));
         $invoiceNumber = $this->generateNextNumber($companyId);
 
@@ -963,12 +985,15 @@ class Invoice extends Model
             $paidAmount = $total;
             $deposit = $total;
             $status = 'paid';
-        }
-        if ($status === 'paid' && $paidAmount <= 0) {
+        } elseif ($requestedStatus === 'paid') {
             $paidAmount = $total;
+            $deposit = $total;
+            $status = 'paid';
+        } elseif ($status !== 'draft') {
+            $status = $paidAmount >= ($total - 0.009) ? 'paid' : 'sent';
         }
-        $remaining = max($total - $deposit, 0);
-        if ($clientType === 'anonymous' || $remaining <= 0.009) {
+        $remaining = max($total - $paidAmount, 0);
+        if ($clientType === 'anonymous' || $status === 'paid' || $remaining <= 0.009) {
             $dueDate = $invoiceDate;
         }
 

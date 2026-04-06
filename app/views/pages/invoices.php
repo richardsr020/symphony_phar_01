@@ -214,7 +214,7 @@ $formatMoney = static function ($value) use ($formatNumber): string {
                     <td><?= htmlspecialchars(trim((string) ($invoice['created_by_name'] ?? '')) !== '' ? (string) $invoice['created_by_name'] : 'Utilisateur', ENT_QUOTES, 'UTF-8') ?></td>
                     <td>
                         <div class="row-actions">
-                            <a class="btn-icon" title="Apercu" href="/invoices/preview/<?= $invoiceId ?>"><i class="fa-regular fa-eye"></i></a>
+                            <a class="btn-icon" title="Apercu" href="/invoices/preview/<?= $invoiceId ?>" data-no-async="true"><i class="fa-regular fa-eye"></i></a>
 
                             <?php if ($canManageInvoices && $status === 'draft'): ?>
                             <a class="btn-icon" title="Modifier brouillon" href="/invoices/edit/<?= $invoiceId ?>">

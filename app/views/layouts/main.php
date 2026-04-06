@@ -13,26 +13,24 @@ $asset = static function (string $path) use ($basePath): string {
     <meta name="csrf-token" content="<?= App\Core\Security::generateCSRF() ?>">
     <title><?= $title ?? 'Kombiphar' ?> - <?= Config::SITE_NAME ?></title>
     
-    <!-- Fonts CDN -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Local fonts: using system font stack by default. To add local webfonts, place files under public/fonts and update public/css/style.css -->
     
     <!-- Styles -->
     <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/style.css'), ENT_QUOTES, 'UTF-8') ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/theme-light.css'), ENT_QUOTES, 'UTF-8') ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/theme-dark.css'), ENT_QUOTES, 'UTF-8') ?>">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/Font-Awesome-7.x/css/all.min.css'), ENT_QUOTES, 'UTF-8') ?>">
 
-    <!-- Tailwind CDN (utilitaires sans reset global) -->
+    <!-- Tailwind (local copy for offline) -->
     <script>
         window.tailwind = window.tailwind || {};
         window.tailwind.config = { corePlugins: { preflight: false } };
     </script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="<?= htmlspecialchars($asset('/public/js/libs/tailwind.min.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
     
-    <!-- Chart.js CDN (seule dépendance externe) -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Chart.js (local copy for offline) -->
+    <script src="<?= htmlspecialchars($asset('/public/chartbundlejs/dist/chart.umd.min.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+    <script src="<?= htmlspecialchars($asset('/public/js/modules/pdf-export.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
 </head>
 <body>
     <div id="page-loader" class="page-loader is-visible" aria-hidden="true">

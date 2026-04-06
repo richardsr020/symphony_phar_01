@@ -16,7 +16,6 @@ $filters = $filters ?? [
 $accounts = $accounts ?? [];
 $showCreateForm = $showCreateForm ?? false;
 $editingTransaction = $editingTransaction ?? null;
-$selectedTransaction = $selectedTransaction ?? null;
 $pagination = $pagination ?? [
     'total' => count($transactions),
     'page' => 1,
@@ -119,7 +118,7 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
     <?php if ($showCreateForm): ?>
     <div class="card" style="margin-bottom: 20px;">
         <h3 style="margin-bottom: 16px;">Nouvelle transaction</h3>
-        <form method="POST" action="/transactions/store" class="transaction-create-form" data-async="true" data-async-success="Transaction enregistree.">
+        <form method="POST" action="/transactions/store" class="transaction-create-form" data-async="true" data-async-success="Transaction enregistree." novalidate>
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
 
             <div class="filters-grid">
@@ -220,7 +219,7 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
     <?php if (is_array($editingTransaction) && $editingTransaction !== []): ?>
     <div class="card" style="margin-bottom: 20px;">
         <h3 style="margin-bottom: 16px;">Modifier transaction #<?= (int) $editingTransaction['id'] ?></h3>
-        <form method="POST" action="/transactions/update/<?= (int) $editingTransaction['id'] ?>" class="transaction-create-form" data-async="true" data-async-success="Transaction mise a jour.">
+        <form method="POST" action="/transactions/update/<?= (int) $editingTransaction['id'] ?>" class="transaction-create-form" data-async="true" data-async-success="Transaction mise a jour." novalidate>
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
 
             <?php
@@ -457,16 +456,23 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
                     <td><?= htmlspecialchars(trim((string) ($transaction['created_by_name'] ?? '')) !== '' ? (string) $transaction['created_by_name'] : 'Utilisateur', ENT_QUOTES, 'UTF-8') ?></td>
                     <td>
                         <?php if ($source === 'invoice_payment'): ?>
-                        <a class="btn-icon" href="/invoices/preview/<?= $sourceId ?>" title="Voir facture">🧾</a>
+                        <a class="btn-icon" href="/invoices/preview/<?= $sourceId ?>" title="Voir facture" aria-label="Voir facture" data-no-async="true"><i class="fa-solid fa-file-invoice-dollar"></i></a>
                         <?php elseif ((string) ($transaction['type'] ?? '') === 'debt_payment'): ?>
-                        <a class="btn-icon" href="/receipts/preview/<?= (int) $transaction['id'] ?>" title="Voir recu">🧾</a>
-                        <button class="btn-icon" onclick="window.location.href='/transactions/view/<?= (int) $transaction['id'] ?>'" title="Voir">👁️</button>
-                        <?php else: ?>
-                        <button class="btn-icon" onclick="window.location.href='/transactions/view/<?= (int) $transaction['id'] ?>'" title="Voir">👁️</button>
-                        <button class="btn-icon" onclick="window.location.href='/transactions/edit/<?= (int) $transaction['id'] ?>'" title="Modifier">✏️</button>
+                        <a class="btn-icon" href="/receipts/preview/<?= (int) $transaction['id'] ?>" title="Voir recu" aria-label="Voir recu" data-no-async="true"><i class="fa-solid fa-receipt"></i></a>
+                        <a class="btn-icon" href="/receipts/pdf/<?= (int) $transaction['id'] ?>" title="Telecharger PDF" aria-label="Telecharger PDF" data-no-async="true"><i class="fa-solid fa-file-pdf"></i></a>
+                        <?php elseif (in_array((string) ($transaction['type'] ?? ''), ['income', 'expense'], true)): ?>
+                        <a class="btn-icon" href="/transactions/preview/<?= (int) $transaction['id'] ?>" title="Voir bon" aria-label="Voir bon" data-no-async="true"><i class="fa-solid fa-eye"></i></a>
+                        <a class="btn-icon" href="/transactions/pdf/<?= (int) $transaction['id'] ?>" title="Telecharger PDF" aria-label="Telecharger PDF" data-no-async="true"><i class="fa-solid fa-file-pdf"></i></a>
+                        <button class="btn-icon" type="button" onclick="window.location.href='/transactions/edit/<?= (int) $transaction['id'] ?>'" title="Modifier" aria-label="Modifier"><i class="fa-regular fa-pen-to-square"></i></button>
                         <form method="POST" action="/transactions/delete/<?= (int) $transaction['id'] ?>" style="display:inline;" data-async="true" data-async-success="Transaction supprimee." onsubmit="return confirm('Supprimer cette transaction ?');">
                             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
-                            <button class="btn-icon" type="submit" title="Supprimer">🗑️</button>
+                            <button class="btn-icon" type="submit" title="Supprimer" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button>
+                        </form>
+                        <?php else: ?>
+                        <button class="btn-icon" type="button" onclick="window.location.href='/transactions/edit/<?= (int) $transaction['id'] ?>'" title="Modifier" aria-label="Modifier"><i class="fa-regular fa-pen-to-square"></i></button>
+                        <form method="POST" action="/transactions/delete/<?= (int) $transaction['id'] ?>" style="display:inline;" data-async="true" data-async-success="Transaction supprimee." onsubmit="return confirm('Supprimer cette transaction ?');">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                            <button class="btn-icon" type="submit" title="Supprimer" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button>
                         </form>
                         <?php endif; ?>
                     </td>
@@ -495,56 +501,6 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
         </div>
     </div>
 
-    <?php if (is_array($selectedTransaction) && $selectedTransaction !== []): ?>
-    <div class="card" style="margin-top: 20px;">
-        <h3 style="margin-bottom: 12px;">Detail transaction #<?= (int) $selectedTransaction['id'] ?></h3>
-        <p><strong>Description:</strong> <?= htmlspecialchars((string) $selectedTransaction['description'], ENT_QUOTES, 'UTF-8') ?></p>
-        <p><strong>Date:</strong> <?= htmlspecialchars(date('d/m/Y', strtotime((string) $selectedTransaction['transaction_date'])), ENT_QUOTES, 'UTF-8') ?></p>
-        <p><strong>Type:</strong> <?= htmlspecialchars($typeLabels[(string) $selectedTransaction['type']] ?? (string) $selectedTransaction['type'], ENT_QUOTES, 'UTF-8') ?></p>
-        <p><strong>Cree par:</strong> <?= htmlspecialchars((string) ($selectedTransaction['created_by_name'] ?? 'Utilisateur'), ENT_QUOTES, 'UTF-8') ?></p>
-        <?php if ((string) ($selectedTransaction['type'] ?? '') === 'expense' && !empty($selectedTransaction['expense_subcategory'])): ?>
-        <p><strong>Sous-categorie depense:</strong> <?= htmlspecialchars($expenseSubcategoryLabels[(string) $selectedTransaction['expense_subcategory']] ?? (string) $selectedTransaction['expense_subcategory'], ENT_QUOTES, 'UTF-8') ?></p>
-        <?php if ((string) ($selectedTransaction['expense_subcategory'] ?? '') === 'fiscal' && (string) ($selectedTransaction['expense_fiscal_subcategory'] ?? '') !== ''): ?>
-        <p><strong>Detail fiscal:</strong> <?= htmlspecialchars($expenseFiscalSubcategoryLabels[(string) $selectedTransaction['expense_fiscal_subcategory']] ?? (string) $selectedTransaction['expense_fiscal_subcategory'], ENT_QUOTES, 'UTF-8') ?></p>
-        <?php endif; ?>
-        <?php if ((string) ($selectedTransaction['expense_subcategory'] ?? '') === 'other' && (string) ($selectedTransaction['expense_subcategory_other'] ?? '') !== ''): ?>
-        <p><strong>Detail autre:</strong> <?= htmlspecialchars((string) $selectedTransaction['expense_subcategory_other'], ENT_QUOTES, 'UTF-8') ?></p>
-        <?php endif; ?>
-        <?php endif; ?>
-        <p><strong>Reference:</strong> <?= htmlspecialchars((string) ($selectedTransaction['reference'] ?: '-'), ENT_QUOTES, 'UTF-8') ?></p>
-        <?php if ((string) ($selectedTransaction['type'] ?? '') === 'debt_payment'): ?>
-        <div style="margin: 10px 0; display:flex; gap:8px; flex-wrap:wrap;">
-            <a class="btn btn-soft btn-xs" href="/receipts/preview/<?= (int) $selectedTransaction['id'] ?>">
-                <i class="fa-regular fa-eye"></i> Voir recu
-            </a>
-            <a class="btn btn-xs" href="/receipts/pdf/<?= (int) $selectedTransaction['id'] ?>" data-no-async="true">
-                <i class="fa-solid fa-file-arrow-down"></i> Telecharger PDF
-            </a>
-        </div>
-        <?php endif; ?>
-
-        <table class="table" style="margin-top: 12px;">
-            <thead>
-                <tr>
-                    <th>Compte</th>
-                    <th>Debit</th>
-                    <th>Credit</th>
-                    <th>Description</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach (($selectedTransaction['entries'] ?? []) as $entry): ?>
-                <tr>
-                    <td><?= htmlspecialchars((string) $entry['code'] . ' ' . (string) $entry['name'], ENT_QUOTES, 'UTF-8') ?></td>
-                    <td>$<?= number_format((float) $entry['debit'], 2) ?></td>
-                    <td>$<?= number_format((float) $entry['credit'], 2) ?></td>
-                    <td><?= htmlspecialchars((string) ($entry['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
-    <?php endif; ?>
 </div>
 
 <style>
@@ -600,6 +556,25 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
     border-radius: var(--radius-md);
     background: var(--bg-surface);
     color: var(--text-primary);
+}
+
+.filter-group.has-error label {
+    color: #dc2626;
+}
+
+.filter-select.input-error,
+.filter-input.input-error,
+.debt-invoice-list.input-error {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.field-error-message {
+    display: block;
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #dc2626;
 }
 
 .filter-actions {
@@ -789,6 +764,7 @@ document.addEventListener('DOMContentLoaded', function () {
         let debtLookupAbortController = null;
         let debtInvoices = [];
         let activeDebtClient = null;
+        let debtInvoicesLoaded = false;
         const defaultAmountLabel = amountLabel ? amountLabel.textContent : 'Montant';
 
         const escapeHtml = (value) => String(value)
@@ -806,11 +782,110 @@ document.addEventListener('DOMContentLoaded', function () {
             return numeric.toFixed(2);
         };
 
+        const isVisibleField = (field) => !!(field && field.offsetParent !== null);
+
+        const resolveErrorContainer = (field) => {
+            if (!field) {
+                return null;
+            }
+            return field.closest('.filter-group') || field.parentElement;
+        };
+
+        const clearFieldError = (field) => {
+            if (!field) {
+                return;
+            }
+            field.classList.remove('input-error');
+            const container = resolveErrorContainer(field);
+            if (!container) {
+                return;
+            }
+            container.classList.remove('has-error');
+            const message = container.querySelector('.field-error-message');
+            if (message) {
+                message.remove();
+            }
+        };
+
+        const setFieldError = (field, message) => {
+            if (!field) {
+                return;
+            }
+            field.classList.add('input-error');
+            const container = resolveErrorContainer(field);
+            if (!container) {
+                return;
+            }
+            container.classList.add('has-error');
+            let messageNode = container.querySelector('.field-error-message');
+            if (!messageNode) {
+                messageNode = document.createElement('small');
+                messageNode.className = 'field-error-message';
+                container.appendChild(messageNode);
+            }
+            messageNode.textContent = message;
+        };
+
+        const getFieldMessage = (field) => {
+            if (!field) {
+                return '';
+            }
+            if (field.validity.valueMissing) {
+                if (field.type === 'date') {
+                    return 'Veuillez renseigner la date.';
+                }
+                if (field.name === 'amount') {
+                    return 'Veuillez renseigner le montant.';
+                }
+                if (field.tagName === 'SELECT') {
+                    return 'Veuillez choisir une valeur.';
+                }
+                return 'Ce champ est requis.';
+            }
+            if (field.validity.rangeUnderflow) {
+                return field.name === 'amount'
+                    ? 'Le montant doit etre superieur a zero.'
+                    : 'La valeur saisie est trop petite.';
+            }
+            if (field.validity.typeMismatch && field.type === 'email') {
+                return 'Adresse email invalide.';
+            }
+            if (field.validity.stepMismatch) {
+                return 'La valeur saisie est invalide.';
+            }
+            return '';
+        };
+
+        const validateVisibleField = (field) => {
+            if (!field || field.disabled || field.type === 'hidden' || !isVisibleField(field)) {
+                clearFieldError(field);
+                return true;
+            }
+            const message = getFieldMessage(field);
+            if (message !== '') {
+                setFieldError(field, message);
+                return false;
+            }
+            clearFieldError(field);
+            return true;
+        };
+
+        const focusField = (field) => {
+            if (!field || typeof field.focus !== 'function') {
+                return;
+            }
+            field.focus();
+            if (typeof field.scrollIntoView === 'function') {
+                field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        };
+
         const isDebtPayment = () => typeSelect.value === 'debt_payment';
 
         const resetDebtClient = () => {
             activeDebtClient = null;
             debtInvoices = [];
+            debtInvoicesLoaded = false;
             if (debtClientName) {
                 debtClientName.value = '';
             }
@@ -823,6 +898,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (debtInvoicesSummary) {
                 debtInvoicesSummary.textContent = '';
             }
+            clearFieldError(debtClientQuery);
         };
 
         const hideDebtSuggestions = () => {
@@ -918,19 +994,31 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
             if (!activeDebtClient) {
+                debtInvoicesList.classList.remove('input-error');
                 debtInvoicesList.innerHTML = '<div class="text-secondary" style="font-size:12px;">Selectionnez un client pour voir ses factures impayees.</div>';
                 if (debtInvoicesSummary) {
                     debtInvoicesSummary.textContent = '';
                 }
                 return;
             }
+            if (!debtInvoicesLoaded) {
+                debtInvoicesList.classList.remove('input-error');
+                debtInvoicesList.innerHTML = '<div class="text-secondary" style="font-size:12px;">Chargement des factures impayees...</div>';
+                if (debtInvoicesSummary) {
+                    debtInvoicesSummary.textContent = '';
+                }
+                return;
+            }
             if (!Array.isArray(debtInvoices) || debtInvoices.length === 0) {
+                debtInvoicesList.classList.add('input-error');
                 debtInvoicesList.innerHTML = '<div class="text-secondary" style="font-size:12px;">Aucune facture impayee trouvee pour ce client.</div>';
                 if (debtInvoicesSummary) {
                     debtInvoicesSummary.textContent = '';
                 }
                 return;
             }
+
+            debtInvoicesList.classList.remove('input-error');
 
             const { allocations, remaining, totalDebt, amount } = computeDebtAllocations();
             const allocationMap = new Map(allocations.map((item) => [String(item.id), item]));
@@ -967,6 +1055,8 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!activeDebtClient || !isDebtPayment()) {
                 return;
             }
+            debtInvoicesLoaded = false;
+            renderDebtInvoices();
             const params = new URLSearchParams();
             if (activeDebtClient.phone) {
                 params.append('phone', activeDebtClient.phone);
@@ -983,10 +1073,14 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 const payload = await response.json();
                 debtInvoices = Array.isArray(payload.items) ? payload.items : [];
+                debtInvoicesLoaded = true;
                 renderDebtInvoices();
+                validateDebtClientState();
             } catch (error) {
                 debtInvoices = [];
+                debtInvoicesLoaded = true;
                 renderDebtInvoices();
+                validateDebtClientState();
             }
         };
 
@@ -1001,6 +1095,92 @@ document.addEventListener('DOMContentLoaded', function () {
             const clientLabel = activeDebtClient?.name || activeDebtClient?.phone || '';
             descriptionInput.readOnly = true;
             descriptionInput.value = clientLabel !== '' ? `Remboursement de dettes - ${clientLabel}` : 'Remboursement de dettes';
+        };
+
+        const validateDebtClientState = () => {
+            if (!debtClientQuery) {
+                return true;
+            }
+            if (!isDebtPayment()) {
+                clearFieldError(debtClientQuery);
+                if (debtInvoicesList) {
+                    debtInvoicesList.classList.remove('input-error');
+                }
+                return true;
+            }
+            if (!activeDebtClient || (!activeDebtClient.name && !activeDebtClient.phone)) {
+                setFieldError(debtClientQuery, 'Selectionnez un client endette.');
+                if (debtInvoicesList) {
+                    debtInvoicesList.classList.remove('input-error');
+                }
+                return false;
+            }
+            if (!Array.isArray(debtInvoices) || debtInvoices.length === 0) {
+                if (debtInvoicesLoaded) {
+                    setFieldError(debtClientQuery, 'Aucune facture impayee pour ce client.');
+                    if (debtInvoicesList) {
+                        debtInvoicesList.classList.add('input-error');
+                    }
+                    return false;
+                }
+                clearFieldError(debtClientQuery);
+                if (debtInvoicesList) {
+                    debtInvoicesList.classList.remove('input-error');
+                }
+                return true;
+            }
+            clearFieldError(debtClientQuery);
+            if (debtInvoicesList) {
+                debtInvoicesList.classList.remove('input-error');
+            }
+            return true;
+        };
+
+        const validateDebtAmount = () => {
+            if (!debtAmountInput) {
+                return true;
+            }
+            if (!validateVisibleField(debtAmountInput)) {
+                return false;
+            }
+            const amount = Number.parseFloat(String(debtAmountInput.value || '0').replace(',', '.')) || 0;
+            if (amount <= 0) {
+                setFieldError(debtAmountInput, 'Saisissez un montant valide.');
+                return false;
+            }
+            clearFieldError(debtAmountInput);
+            return true;
+        };
+
+        const validateForm = () => {
+            let valid = true;
+            Array.from(form.querySelectorAll('input, select, textarea')).forEach((field) => {
+                if (field.type === 'hidden') {
+                    return;
+                }
+                if (field === debtClientQuery) {
+                    return;
+                }
+                if (field === debtAmountInput && isDebtPayment()) {
+                    return;
+                }
+                if (!validateVisibleField(field)) {
+                    valid = false;
+                }
+            });
+
+            if (isDebtPayment()) {
+                if (!validateDebtClientState()) {
+                    valid = false;
+                }
+                if (!validateDebtAmount()) {
+                    valid = false;
+                }
+            } else if (debtAmountInput && !validateVisibleField(debtAmountInput)) {
+                valid = false;
+            }
+
+            return valid;
         };
 
         const sync = () => {
@@ -1061,6 +1241,9 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!debtMode) {
                 resetDebtClient();
                 hideDebtSuggestions();
+                if (debtInvoicesList) {
+                    debtInvoicesList.classList.remove('input-error');
+                }
             }
             syncDebtDescription();
             if (debtMode) {
@@ -1081,7 +1264,9 @@ document.addEventListener('DOMContentLoaded', function () {
                     debtClientPhone.value = '';
                 }
                 debtInvoices = [];
+                debtInvoicesLoaded = false;
                 renderDebtInvoices();
+                validateDebtClientState();
                 if (debtLookupTimer) {
                     clearTimeout(debtLookupTimer);
                 }
@@ -1119,6 +1304,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 hideDebtSuggestions();
                 syncDebtDescription();
+                validateDebtClientState();
                 fetchDebtInvoices();
             });
         }
@@ -1126,32 +1312,56 @@ document.addEventListener('DOMContentLoaded', function () {
         if (debtAmountInput) {
             debtAmountInput.addEventListener('input', () => {
                 if (!isDebtPayment()) {
+                    validateVisibleField(debtAmountInput);
                     return;
                 }
                 renderDebtInvoices();
+                validateDebtAmount();
+            });
+            debtAmountInput.addEventListener('change', () => {
+                if (isDebtPayment()) {
+                    renderDebtInvoices();
+                    validateDebtAmount();
+                    return;
+                }
+                validateVisibleField(debtAmountInput);
             });
         }
 
         form.addEventListener('submit', (event) => {
-            if (!isDebtPayment()) {
-                return;
-            }
-            if (!activeDebtClient || (!activeDebtClient.name && !activeDebtClient.phone)) {
+            if (!validateForm()) {
                 event.preventDefault();
-                window.alert('Selectionnez un client endette avant d\'enregistrer.');
+                focusField(form.querySelector('.input-error'));
                 return;
             }
-            const amount = Number.parseFloat(String(debtAmountInput?.value || '0').replace(',', '.')) || 0;
-            if (amount <= 0) {
-                event.preventDefault();
-                window.alert('Saisissez un montant valide.');
+        });
+
+        Array.from(form.querySelectorAll('input, select, textarea')).forEach((field) => {
+            if (field.type === 'hidden') {
                 return;
             }
-            if (!Array.isArray(debtInvoices) || debtInvoices.length === 0) {
-                event.preventDefault();
-                window.alert('Aucune facture impayee pour ce client.');
-                return;
-            }
+            field.addEventListener('input', () => {
+                if (field === debtClientQuery) {
+                    validateDebtClientState();
+                    return;
+                }
+                if (field === debtAmountInput && isDebtPayment()) {
+                    validateDebtAmount();
+                    return;
+                }
+                validateVisibleField(field);
+            });
+            field.addEventListener('change', () => {
+                if (field === debtClientQuery) {
+                    validateDebtClientState();
+                    return;
+                }
+                if (field === debtAmountInput && isDebtPayment()) {
+                    validateDebtAmount();
+                    return;
+                }
+                validateVisibleField(field);
+            });
         });
 
         typeSelect.addEventListener('change', sync);

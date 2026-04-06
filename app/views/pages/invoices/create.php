@@ -12,6 +12,12 @@ $canSaveDraft = $canSaveDraft ?? true;
 $invoiceProducts = $invoiceProducts ?? [];
 $defaultTaxRate = isset($defaultTaxRate) ? round((float) $defaultTaxRate, 2) : 0.0;
 $csrfToken = App\Core\Security::generateCSRF();
+$paymentMethodValue = (string) ($invoiceToEdit['payment_method'] ?? 'especes');
+$allowedPaymentMethods = ['virement', 'mobile-money', 'carte', 'especes'];
+if (!in_array($paymentMethodValue, $allowedPaymentMethods, true)) {
+    $paymentMethodValue = 'especes';
+}
+$depositAmountValue = isset($invoiceToEdit['paid_amount']) ? round((float) $invoiceToEdit['paid_amount'], 2) : 0.0;
 $invoiceType = 'product';
 $clientType = 'known';
 $clientNameValue = (string) ($invoiceToEdit['customer_name'] ?? '');
@@ -23,6 +29,9 @@ if ($clientPhoneValue !== '' && $clientNameValue !== '') {
     $clientLookupValue = $clientPhoneValue;
 } else {
     $clientLookupValue = $clientNameValue;
+}
+if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
+    $clientNameValue = 'Client anonyme';
 }
 
 $lineItems = [
@@ -88,7 +97,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     </div>
     <?php endif; ?>
 
-    <form id="invoice-form" action="<?= htmlspecialchars((string) $formAction, ENT_QUOTES, 'UTF-8') ?>" method="POST">
+    <form id="invoice-form" action="<?= htmlspecialchars((string) $formAction, ENT_QUOTES, 'UTF-8') ?>" method="POST" novalidate>
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
         <input type="hidden" id="invoice-status-field" name="status" value="<?= htmlspecialchars((string) (($invoiceToEdit['status'] ?? 'envoyee')), ENT_QUOTES, 'UTF-8') ?>">
         <input type="hidden" id="summary-subtotal-input" name="summary_subtotal" value="0">
@@ -128,10 +137,10 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                         <label class="form-field">
                             <span>Mode paiement</span>
                             <select name="payment_method">
-                                <option value="virement">Virement bancaire</option>
-                                <option value="mobile-money">Mobile Money</option>
-                                <option value="carte">Carte</option>
-                                <option value="especes">Especes</option>
+                                <option value="virement" <?= $paymentMethodValue === 'virement' ? 'selected' : '' ?>>Virement bancaire</option>
+                                <option value="mobile-money" <?= $paymentMethodValue === 'mobile-money' ? 'selected' : '' ?>>Mobile Money</option>
+                                <option value="carte" <?= $paymentMethodValue === 'carte' ? 'selected' : '' ?>>Carte</option>
+                                <option value="especes" <?= $paymentMethodValue === 'especes' ? 'selected' : '' ?>>Especes</option>
                             </select>
                         </label>
                      
@@ -255,7 +264,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                                             step="0.01"
                                             value="<?= htmlspecialchars((string) $item['price'], ENT_QUOTES, 'UTF-8') ?>"
                                             required
-                                            readonly
+                                            <?= $invoiceType === 'product' ? 'readonly' : '' ?>
                                         >
                                     </td>
                                     <td>
@@ -305,7 +314,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                         </div>
                         <div class="summary-row">
                             <span>Acompte recu</span>
-                            <input type="number" id="deposit-value" name="deposit_value" min="0" step="0.01" value="0">
+                            <input type="number" id="deposit-value" name="deposit_value" min="0" step="0.01" value="<?= htmlspecialchars(number_format($depositAmountValue, 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
                         </div>
                     </div>
 
@@ -456,8 +465,32 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 .form-field textarea {
     resize: vertical;
 }
-if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
-    $clientNameValue = 'Client anonyme';
+
+.form-field.has-error span,
+.summary-row.has-error span,
+.line-items-table td.has-error {
+    color: #dc2626;
+}
+
+.form-field input.input-error,
+.form-field select.input-error,
+.form-field textarea.input-error,
+.summary-row input.input-error,
+.summary-row select.input-error,
+.summary-row textarea.input-error,
+.line-items-table input.input-error,
+.line-items-table select.input-error,
+.line-items-table textarea.input-error {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.field-error-message {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #dc2626;
 }
 
 .client-type-toggle {
@@ -859,6 +892,7 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
     const SALES_STORAGE_KEY = 'sales.smart.client_names';
     let dueDateManuallyEdited = isEditMode;
     let clientEmailManuallyEdited = false;
+    let depositManuallyEdited = isEditMode;
     let lastKnownName = String(clientNameInput?.value || '').trim();
     let lastKnownEmail = String(clientEmailInput?.value || '').trim();
     let lastKnownLookup = String(clientLookupInput?.value || '').trim();
@@ -927,6 +961,106 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
     const formatMoney = (amount) => {
         const currency = currencySelect.value || 'USD';
         return `${formatNumberCompact(amount, 2)} ${currency}`;
+    };
+
+    const isVisibleField = (field) => !!(field && field.offsetParent !== null);
+
+    const resolveErrorContainer = (field) => {
+        if (!field) {
+            return null;
+        }
+        return field.closest('.form-field')
+            || field.closest('.summary-row')
+            || field.closest('.line-product-wrap')
+            || field.closest('td')
+            || field.parentElement;
+    };
+
+    const clearFieldError = (field) => {
+        if (!field) {
+            return;
+        }
+        field.classList.remove('input-error');
+        const container = resolveErrorContainer(field);
+        if (!container) {
+            return;
+        }
+        container.classList.remove('has-error');
+        const message = container.querySelector('.field-error-message');
+        if (message) {
+            message.remove();
+        }
+    };
+
+    const setFieldError = (field, message) => {
+        if (!field) {
+            return;
+        }
+        const container = resolveErrorContainer(field);
+        field.classList.add('input-error');
+        if (!container) {
+            return;
+        }
+        container.classList.add('has-error');
+        let messageNode = container.querySelector('.field-error-message');
+        if (!messageNode) {
+            messageNode = document.createElement('small');
+            messageNode.className = 'field-error-message';
+            container.appendChild(messageNode);
+        }
+        messageNode.textContent = message;
+    };
+
+    const getNativeFieldMessage = (field) => {
+        if (!field) {
+            return '';
+        }
+        if (field.validity.valueMissing) {
+            if (field.type === 'date') {
+                return 'Ce champ date est requis.';
+            }
+            if (field.tagName === 'SELECT') {
+                return 'Veuillez choisir une valeur.';
+            }
+            return 'Ce champ est requis.';
+        }
+        if (field.validity.typeMismatch && field.type === 'email') {
+            return 'Adresse email invalide.';
+        }
+        if (field.validity.rangeUnderflow) {
+            return 'La valeur saisie est trop petite.';
+        }
+        if (field.validity.rangeOverflow) {
+            return 'La valeur saisie est trop grande.';
+        }
+        if (field.validity.stepMismatch) {
+            return 'La valeur saisie est invalide.';
+        }
+        return '';
+    };
+
+    const validateNativeField = (field) => {
+        if (!field || field.disabled || field.type === 'hidden' || !isVisibleField(field)) {
+            clearFieldError(field);
+            return true;
+        }
+        const message = getNativeFieldMessage(field);
+        if (message !== '') {
+            setFieldError(field, message);
+            return false;
+        }
+        clearFieldError(field);
+        return true;
+    };
+
+    const focusField = (field) => {
+        if (!field || typeof field.focus !== 'function') {
+            return;
+        }
+        field.focus();
+        if (typeof field.scrollIntoView === 'function') {
+            field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
     };
 
     const setInputValue = (input, value) => {
@@ -1044,6 +1178,25 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
         clientNameInput.value = extractedName !== '' ? extractedName : rawLookup;
         clientPhoneHiddenInput.value = digits.length >= 6 ? digits : '';
         return rawLookup;
+    };
+
+    const validateClientLookup = () => {
+        if (!clientLookupInput) {
+            return true;
+        }
+        if (isAnonymousClient()) {
+            clearFieldError(clientLookupInput);
+            return true;
+        }
+        syncClientLookupHidden();
+        const clientNameValue = String(clientNameInput?.value || '').trim();
+        const clientPhoneValue = String(clientPhoneHiddenInput?.value || '').trim();
+        if (clientNameValue === '' && clientPhoneValue === '') {
+            setFieldError(clientLookupInput, 'Renseignez un nom ou un telephone pour le client.');
+            return false;
+        }
+        clearFieldError(clientLookupInput);
+        return true;
     };
 
     const hideClientSuggestions = () => {
@@ -1169,6 +1322,7 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
             field.style.display = anonymous ? 'none' : '';
         });
         syncClientLookupHidden();
+        validateClientLookup();
         if (anonymous) {
             hideClientSuggestions();
         }
@@ -1347,6 +1501,7 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
         const unitSelect = row.querySelector('.line-unit-code');
         const stockHint = row.querySelector('.line-stock-hint');
         const qtyInput = row.querySelector('.line-qty');
+        const priceInput = row.querySelector('.line-price');
 
         if (isProductInvoice()) {
             const rawProductId = productSelect.value;
@@ -1355,6 +1510,9 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
             const selectedUnit = String(unitSelect?.value || unitSelect?.dataset.selectedUnit || '').toLowerCase();
             productHidden.value = productId;
             descriptionInput.readOnly = false;
+            if (priceInput) {
+                priceInput.readOnly = true;
+            }
             if (product) {
                 const smartDescription = composeProductDescription(product);
                 if (!isRowManual(row, 'manualDescription') || String(descriptionInput.value || '').trim() === '') {
@@ -1377,7 +1535,6 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
                     ? (availableInBase / selectedUnitFactor)
                     : availableInBase;
                 stockHint.textContent = `Stock actuel: ${formatNumberCompact(availableInSelectedUnit, 2)}`;
-                const priceInput = row.querySelector('.line-price');
                 const taxInput = row.querySelector('.line-tax');
                 const currentPrice = parseNumber(priceInput?.value || '0');
                 if (priceInput && (!isRowManual(row, 'manualPrice') || currentPrice <= 0)) {
@@ -1414,12 +1571,68 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
         productSelect.value = '';
         stockHint.textContent = '';
         descriptionInput.readOnly = false;
+        if (priceInput) {
+            priceInput.readOnly = false;
+        }
         descriptionHidden.value = String(descriptionInput.value || '').trim();
         if (unitSelect) {
             unitSelect.innerHTML = '<option value="">Unite...</option>';
             unitSelect.value = '';
             unitSelect.dataset.selectedUnit = '';
         }
+        clearFieldError(productSelect);
+        clearFieldError(unitSelect);
+    };
+
+    const validateLineRow = (row) => {
+        if (!row) {
+            return true;
+        }
+        syncRowDescription(row);
+        const descriptionInput = row.querySelector('.line-description');
+        const descriptionHidden = row.querySelector('.line-description-hidden');
+        const productSelect = row.querySelector('.line-product-id');
+        const productHidden = row.querySelector('.line-product-hidden');
+        const qtyInput = row.querySelector('.line-qty');
+        const unitSelect = row.querySelector('.line-unit-code');
+        const priceInput = row.querySelector('.line-price');
+        let rowValid = true;
+
+        clearFieldError(descriptionInput);
+        clearFieldError(productSelect);
+        clearFieldError(qtyInput);
+        clearFieldError(unitSelect);
+        clearFieldError(priceInput);
+
+        if (isProductInvoice()) {
+            if (String(productHidden?.value || '').trim() === '') {
+                setFieldError(productSelect, 'Choisissez un produit.');
+                rowValid = false;
+            }
+            if (String(unitSelect?.value || '').trim() === '') {
+                setFieldError(unitSelect, 'Choisissez une unite.');
+                rowValid = false;
+            }
+        } else if (String(descriptionHidden?.value || '').trim() === '') {
+            setFieldError(descriptionInput, 'Renseignez la description du service.');
+            rowValid = false;
+        }
+
+        const qtyValue = parseNumber(qtyInput?.value || '0');
+        if (!qtyInput || String(qtyInput.value || '').trim() === '' || qtyValue <= 0) {
+            setFieldError(qtyInput, 'La quantite doit etre superieure a zero.');
+            rowValid = false;
+        }
+
+        if (!priceInput || String(priceInput.value || '').trim() === '') {
+            setFieldError(priceInput, 'Renseignez le prix unitaire.');
+            rowValid = false;
+        } else if (parseNumber(priceInput.value) < 0) {
+            setFieldError(priceInput, 'Le prix unitaire ne peut pas etre negatif.');
+            rowValid = false;
+        }
+
+        return rowValid;
     };
 
     const updateRow = (row) => {
@@ -1457,7 +1670,15 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
         discount = Math.min(discount, grossTotal);
 
         const total = Math.max(grossTotal - discount, 0);
-        const deposit = parseNumber(depositValue.value);
+        if (depositValue && !depositManuallyEdited) {
+            setInputValue(depositValue, total.toFixed(2));
+        }
+
+        let deposit = parseNumber(depositValue.value);
+        if (deposit > total) {
+            deposit = total;
+            setInputValue(depositValue, total.toFixed(2));
+        }
         const balance = Math.max(total - deposit, 0);
 
         summarySubtotal.textContent = formatMoney(subtotal);
@@ -1540,6 +1761,12 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
         row.querySelectorAll('.js-line-input').forEach((input) => {
             input.addEventListener('input', computeSummary);
             input.addEventListener('change', computeSummary);
+            input.addEventListener('input', () => {
+                validateLineRow(row);
+            });
+            input.addEventListener('change', () => {
+                validateLineRow(row);
+            });
         });
 
         const descriptionInput = row.querySelector('.line-description');
@@ -1656,7 +1883,7 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
                     <option value="">Unite...</option>
                 </select>
             </td>
-            <td><input type="number" name="line_price[]" class="line-price js-line-input" min="0" step="0.01" value="0" required readonly></td>
+            <td><input type="number" name="line_price[]" class="line-price js-line-input" min="0" step="0.01" value="0" required></td>
             <td>
                 <select name="line_tax[]" class="line-tax js-line-input">
                     <option value="0" ${defaultTaxRate === 0 ? 'selected' : ''}>0</option>
@@ -1676,6 +1903,9 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
         form.classList.toggle('invoice-type-service', !isProduct);
         getRows().forEach((row) => {
             syncRowDescription(row);
+            if (row.querySelector('.input-error')) {
+                validateLineRow(row);
+            }
         });
         computeSummary();
     };
@@ -1689,7 +1919,18 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
     invoiceTypeSelect.addEventListener('change', setInvoiceTypeUi);
     discountType.addEventListener('change', computeSummary);
     discountValue.addEventListener('input', computeSummary);
-    depositValue.addEventListener('input', computeSummary);
+    depositValue.addEventListener('input', () => {
+        if (wasUserEdited(depositValue)) {
+            depositManuallyEdited = true;
+        }
+        computeSummary();
+    });
+    depositValue.addEventListener('change', () => {
+        if (wasUserEdited(depositValue)) {
+            depositManuallyEdited = true;
+        }
+        computeSummary();
+    });
     if (currencySelect) {
         setInputValue(currencySelect, 'USD');
         currencySelect.addEventListener('change', computeSummary);
@@ -1703,54 +1944,56 @@ if ($clientType === 'anonymous' && trim($clientNameValue) === '') {
     }
 
     submitInvoiceBtn.addEventListener('click', () => {
+        const total = parseNumber(summaryTotalInput?.value || '0');
+        const deposit = parseNumber(depositValue?.value || '0');
+        const balance = Math.max(total - deposit, 0);
+
         if (statusField.value === 'draft' || statusField.value === 'brouillon') {
-            statusField.value = 'envoyee';
+            statusField.value = balance <= 0.009 ? 'payee' : 'envoyee';
+            return;
         }
+
+        statusField.value = balance <= 0.009 ? 'payee' : 'envoyee';
     });
 
     form.addEventListener('submit', (event) => {
+        // Met à jour le résumé et garantit la présence de deposit_value avant validation (utile en mode offline)
+        try {
+            if (typeof computeSummary === 'function') {
+                computeSummary();
+            }
+        } catch (err) {
+            console.warn('computeSummary failed', err);
+        }
+        if (depositValue) {
+            depositValue.value = String(depositValue.value || '0');
+        }
+
         let isValid = true;
         syncClientLookupHidden();
-        if (!isAnonymousClient()) {
-            const clientNameValue = String(clientNameInput?.value || '').trim();
-            const clientPhoneValue = String(clientPhoneHiddenInput?.value || '').trim();
-            if (clientNameValue === '' && clientPhoneValue === '') {
-                event.preventDefault();
-                notify('Renseignez un nom ou un telephone pour le client.', 'warning');
-                return;
+        [issueDateInput, dueDateInput, paymentMethodSelect].forEach((field) => {
+            if (!validateNativeField(field)) {
+                isValid = false;
             }
+        });
+
+        if (!validateClientLookup()) {
+            isValid = false;
         }
+
         getRows().forEach((row) => {
-            syncRowDescription(row);
-            const qtyValue = parseNumber(row.querySelector('.line-qty')?.value || '0');
-            if (qtyValue <= 0) {
+            if (!validateLineRow(row)) {
                 isValid = false;
-            }
-            const description = row.querySelector('.line-description-hidden').value.trim();
-            if (description === '') {
-                isValid = false;
-            }
-            if (isProductInvoice()) {
-                const productId = row.querySelector('.line-product-hidden').value;
-                const unitCode = row.querySelector('.line-unit-code')?.value || '';
-                if (!productId) {
-                    isValid = false;
-                }
-                if (!unitCode) {
-                    isValid = false;
-                }
             }
         });
 
         if (!isValid) {
             event.preventDefault();
-            notify('Completez toutes les lignes de vente avant de continuer.', 'warning');
+            const firstInvalidField = form.querySelector('.input-error');
+            focusField(firstInvalidField);
             return;
         }
 
-        if (paymentMethodSelect) {
-            localStorage.setItem('sales.smart.last_payment_method', String(paymentMethodSelect.value || ''));
-        }
         if (clientLookupInput && !isAnonymousClient()) {
             pushToRecentList(SALES_STORAGE_KEY, clientLookupInput.value);
         }
@@ -1871,10 +2114,7 @@ th{background:#f8fafc;text-align:left;color:#475569;}
 
     if (!isEditMode) {
         if (paymentMethodSelect) {
-            const lastPaymentMethod = String(localStorage.getItem('sales.smart.last_payment_method') || '').trim();
-            if (lastPaymentMethod !== '' && paymentMethodSelect.querySelector(`option[value="${lastPaymentMethod}"]`)) {
-                setInputValue(paymentMethodSelect, lastPaymentMethod);
-            }
+            setInputValue(paymentMethodSelect, 'especes');
         }
         if (clientLookupInput && String(clientLookupInput.value || '').trim() === '') {
             const recentClients = readStringList(SALES_STORAGE_KEY);
@@ -1889,6 +2129,7 @@ th{background:#f8fafc;text-align:left;color:#475569;}
             activeClient = null;
             lastKnownLookup = String(clientLookupInput.value || '').trim();
             syncClientLookupHidden();
+            validateClientLookup();
             hideClientSuggestions();
             if (clientLookupTimer) {
                 window.clearTimeout(clientLookupTimer);
@@ -1900,6 +2141,7 @@ th{background:#f8fafc;text-align:left;color:#475569;}
         clientLookupInput.addEventListener('change', () => {
             activeClient = null;
             syncClientLookupHidden();
+            validateClientLookup();
             fetchClientSuggestions(String(clientLookupInput.value || ''));
         });
         clientLookupInput.addEventListener('focus', () => {
@@ -1957,6 +2199,12 @@ th{background:#f8fafc;text-align:left;color:#475569;}
 
     if (dueDateInput) {
         dueDateInput.addEventListener('input', () => {
+            validateNativeField(dueDateInput);
+        });
+        dueDateInput.addEventListener('change', () => {
+            validateNativeField(dueDateInput);
+        });
+        dueDateInput.addEventListener('input', () => {
             if (wasUserEdited(dueDateInput)) {
                 dueDateManuallyEdited = true;
             }
@@ -1968,8 +2216,19 @@ th{background:#f8fafc;text-align:left;color:#475569;}
         });
     }
     if (issueDateInput) {
+        issueDateInput.addEventListener('input', () => {
+            validateNativeField(issueDateInput);
+        });
+        issueDateInput.addEventListener('change', () => {
+            validateNativeField(issueDateInput);
+        });
         issueDateInput.addEventListener('input', syncDueDateFromIssueDate);
         issueDateInput.addEventListener('change', syncDueDateFromIssueDate);
+    }
+    if (paymentMethodSelect) {
+        paymentMethodSelect.addEventListener('change', () => {
+            validateNativeField(paymentMethodSelect);
+        });
     }
     syncDueDateFromIssueDate();
     syncClientEmailFromName();
@@ -1992,6 +2251,7 @@ th{background:#f8fafc;text-align:left;color:#475569;}
                 debt_count: parseNumber(button.dataset.debtCount || '0'),
                 debt_total: parseNumber(button.dataset.debtTotal || '0'),
             });
+            validateClientLookup();
         });
     }
 

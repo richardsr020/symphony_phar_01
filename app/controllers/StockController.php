@@ -62,6 +62,52 @@ class StockController extends Controller
         ]);
     }
 
+    public function alerts(): void
+    {
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+
+        if ($companyId <= 0) {
+            $this->redirect('/login');
+        }
+        if (!RolePermissions::canAccessStock($role)) {
+            $this->redirect('/dashboard?error=stock_forbidden');
+        }
+
+        $alerts = array_values(array_filter(
+            (new Dashboard())->getAlerts($companyId, 100),
+            static fn(array $alert): bool => in_array((string) ($alert['type'] ?? ''), ['stock', 'expiry'], true)
+        ));
+
+        $summary = [
+            'total' => count($alerts),
+            'critical' => 0,
+            'warning' => 0,
+            'out_of_stock' => 0,
+            'low_stock' => 0,
+            'expiry' => 0,
+        ];
+
+        foreach ($alerts as $alert) {
+            $severity = (string) ($alert['severity'] ?? '');
+            if (isset($summary[$severity])) {
+                $summary[$severity]++;
+            }
+
+            $statusKey = (string) ($alert['status_key'] ?? '');
+            if (isset($summary[$statusKey])) {
+                $summary[$statusKey]++;
+            }
+        }
+
+        $this->renderMain('stock-alerts', [
+            'title' => 'Alertes stock',
+            'alerts' => $alerts,
+            'summary' => $summary,
+        ]);
+    }
+
     public function exportLots(): void
     {
         $sessionUser = Session::get('user', []);
@@ -307,7 +353,8 @@ class StockController extends Controller
 
         try {
             $product = $this->productModel->findByIdForCompany($companyId, $productId);
-            $this->productModel->deactivate($companyId, $productId);
+            // Perform a definitive deletion that records stock out movements and removes lots and related metadata
+            $this->productModel->deleteProductFully($companyId, $productId, $userId);
             AuditLogger::log($userId, 'product_deleted', 'products', $productId, is_array($product) ? [
                 'name' => (string) ($product['name'] ?? ''),
                 'sku' => (string) ($product['sku'] ?? ''),
@@ -315,7 +362,7 @@ class StockController extends Controller
                 'quantity' => (float) ($product['quantity'] ?? 0),
                 'min_stock' => (float) ($product['min_stock'] ?? 0),
             ] : null, [
-                'status' => 'deactivated',
+                'status' => 'deleted_definitively',
             ]);
             $this->redirect('/stock?success=product_deleted');
         } catch (\InvalidArgumentException $exception) {
@@ -355,7 +402,7 @@ class StockController extends Controller
                 if (!is_array($product)) {
                     continue;
                 }
-                $this->productModel->deactivate($companyId, $productId);
+                $this->productModel->deleteProductFully($companyId, $productId, $userId);
                 AuditLogger::log($userId, 'product_deleted', 'products', $productId, null, [
                     'name' => (string) ($product['name'] ?? ''),
                     'sku' => (string) ($product['sku'] ?? ''),

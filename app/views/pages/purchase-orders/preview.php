@@ -153,8 +153,6 @@ $companyAddress = (string) ($company['address'] ?? '');
 }
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
 <?php if ($autoPrint): ?>
 <script>
 window.addEventListener('load', () => {
@@ -191,39 +189,12 @@ window.addEventListener('load', () => {
     };
 
     downloadBtn.addEventListener('click', async () => {
-        if (typeof window.html2pdf !== 'function') {
-            notify('Le module PDF est indisponible pour le moment.', 'error');
-            return;
-        }
-        const initialHtml = downloadBtn.innerHTML;
-        downloadBtn.disabled = true;
-        downloadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generation...';
-
-        try {
-            await window.html2pdf()
-                .set({
-                    margin: 0,
-                    filename: buildFileName(),
-                    image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: {
-                        scale: 2,
-                        useCORS: true,
-                        backgroundColor: '#ffffff',
-                    },
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-                })
-                .from(sheet)
-                .save();
-
-            notify('PDF telecharge avec succes.', 'success');
-        } catch (error) {
-            console.error('PO PDF download failed', error);
-            notify('Impossible de telecharger le PDF pour le moment.', 'error');
-        } finally {
-            downloadBtn.disabled = false;
-            downloadBtn.innerHTML = initialHtml;
-        }
+        await window.SymphonyPdfExport.download({
+            button: downloadBtn,
+            sheet,
+            filename: buildFileName(),
+            notify,
+        });
     });
 })();
 </script>

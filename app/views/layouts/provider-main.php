@@ -13,7 +13,7 @@ $asset = static function (string $path) use ($basePath): string {
     <meta name="csrf-token" content="<?= $csrfToken ?? '' ?>">
     <title><?= htmlspecialchars($title ?? 'Provider', ENT_QUOTES, 'UTF-8') ?> - NestCorporation</title>
     <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/style.css'), ENT_QUOTES, 'UTF-8') ?>">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/Font-Awesome-7.x/css/all.min.css'), ENT_QUOTES, 'UTF-8') ?>" crossorigin="anonymous" referrerpolicy="no-referrer">
     <script>
         window.tailwind = window.tailwind || {};
         window.tailwind.config = { corePlugins: { preflight: false } };

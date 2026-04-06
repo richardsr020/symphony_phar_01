@@ -144,6 +144,7 @@ foreach ($openLots as $lotItem) {
         'opened_at' => (string) ($lotItem['opened_at'] ?? ''),
         'base_unit' => (string) ($lotItem['base_unit'] ?? ''),
         'is_expired' => (bool) ($lotItem['is_expired'] ?? false),
+        'is_in_peremption' => (bool) ($lotItem['is_in_peremption'] ?? false),
     ];
 }
 
@@ -206,6 +207,7 @@ foreach ($openLots as $lotItem) {
         'expiration_date' => (string) ($lotItem['expiration_date'] ?? ''),
         'base_unit' => (string) ($lotItem['base_unit'] ?? 'unite'),
         'is_expired' => (bool) ($lotItem['is_expired'] ?? false),
+        'is_in_peremption' => (bool) ($lotItem['is_in_peremption'] ?? false),
     ];
 }
 
@@ -262,26 +264,35 @@ sort($presentationSuggestions);
 
 $canManageStock = $canManageStock ?? true;
 $stockAlerts = [];
+$outOfStockCount = 0;
+$lowStockBannerCount = 0;
+$expiryAlertCount = 0;
+$criticalStockAlertCount = 0;
 if ($alerts !== []) {
     foreach ($alerts as $alert) {
         $type = (string) ($alert['type'] ?? '');
         if (!in_array($type, ['stock', 'expiry'], true)) {
             continue;
         }
-        $title = trim((string) ($alert['title'] ?? 'Alerte'));
-        $message = trim((string) ($alert['message'] ?? ''));
-        $label = $title;
-        if ($message !== '') {
-            $label .= ' - ' . $message;
+
+        $stockAlerts[] = $alert;
+        $statusKey = (string) ($alert['status_key'] ?? '');
+        $severity = (string) ($alert['severity'] ?? '');
+        if ($statusKey === 'out_of_stock') {
+            $outOfStockCount++;
         }
-        $stockAlerts[] = [
-            'label' => $label,
-            'severity' => (string) ($alert['severity'] ?? 'warning'),
-        ];
+        if ($statusKey === 'low_stock') {
+            $lowStockBannerCount++;
+        }
+        if ($type === 'expiry') {
+            $expiryAlertCount++;
+        }
+        if ($severity === 'critical') {
+            $criticalStockAlertCount++;
+        }
     }
 }
 $stockAlertCount = count($stockAlerts);
-$stockAlertItems = array_slice($stockAlerts, 0, 3);
 ?>
 
 <div class="stocks-page">
@@ -302,14 +313,28 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
 
     <?php if ($stockAlertCount > 0): ?>
     <div class="alert-banner">
-        <div class="alert-banner-title">Alertes stock (<?= htmlspecialchars((string) $stockAlertCount, ENT_QUOTES, 'UTF-8') ?>)</div>
+        <div class="alert-banner-head">
+            <div>
+                <div class="alert-banner-title">Alertes stock (<?= htmlspecialchars((string) $stockAlertCount, ENT_QUOTES, 'UTF-8') ?>)</div>
+                <div class="alert-banner-summary">Le resume reste compact ici. Ouvrez la page detail pour voir chaque alerte proprement.</div>
+            </div>
+            <a class="btn-icon alert-banner-detail-btn" href="/stock/alerts" title="Voir le detail des alertes stock" aria-label="Voir le detail des alertes stock">
+                <i class="fa-solid fa-circle-info"></i>
+            </a>
+        </div>
         <div class="alert-banner-items">
-            <?php foreach ($stockAlertItems as $item): ?>
-            <?php $severity = strtolower((string) ($item['severity'] ?? 'warning')); ?>
-            <span class="alert-banner-item alert-banner-item-<?= htmlspecialchars($severity, ENT_QUOTES, 'UTF-8') ?>">
-                <?= htmlspecialchars((string) ($item['label'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
-            </span>
-            <?php endforeach; ?>
+            <?php if ($criticalStockAlertCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-critical">Critiques: <?= (int) $criticalStockAlertCount ?></span>
+            <?php endif; ?>
+            <?php if ($outOfStockCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-critical">Ruptures: <?= (int) $outOfStockCount ?></span>
+            <?php endif; ?>
+            <?php if ($lowStockBannerCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-warning">Stock bas: <?= (int) $lowStockBannerCount ?></span>
+            <?php endif; ?>
+            <?php if ($expiryAlertCount > 0): ?>
+            <span class="alert-banner-item alert-banner-item-warning">Expirations: <?= (int) $expiryAlertCount ?></span>
+            <?php endif; ?>
         </div>
     </div>
     <?php endif; ?>
@@ -514,8 +539,11 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                                         $lotOptionLabel .= ' | ' . trim((string) $lot['supplier']);
                                     }
                                     $lotOptionExpired = (bool) ($lot['is_expired'] ?? false);
+                                    $lotOptionPeremption = (!$lotOptionExpired) && (bool) ($lot['is_in_peremption'] ?? false);
                                     if ($lotOptionExpired) {
                                         $lotOptionLabel .= ' | Perime';
+                                    } elseif ($lotOptionPeremption) {
+                                        $lotOptionLabel .= ' | Peremption';
                                     }
                                 ?>
                                 <option value="<?= $lotOptionId ?>" <?= $lotOptionExpired ? 'disabled' : '' ?>>
@@ -772,8 +800,9 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                     $lotId = (int) ($lot['id'] ?? 0);
                     $remaining = (float) ($lot['quantity_remaining_base'] ?? 0);
                     $isExpired = (bool) ($lot['is_expired'] ?? false);
+                    $isPeremption = (!$isExpired) && (bool) ($lot['is_in_peremption'] ?? false);
                 ?>
-                <tr class="<?= $isExpired ? 'stock-lot-expired' : '' ?>">
+                <tr class="<?= $isExpired ? 'stock-lot-expired' : ($isPeremption ? 'stock-lot-peremption' : '') ?>">
                     <td>
                         <input
                             type="checkbox"
@@ -797,9 +826,13 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                     <td><?= htmlspecialchars($formatNumber((float) ($lot['unit_cost_base'] ?? 0), 6), ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= !empty($lot['expiration_date']) ? htmlspecialchars(date('d/m/Y', strtotime((string) $lot['expiration_date'])), ENT_QUOTES, 'UTF-8') : '-' ?></td>
                     <td>
-                        <span class="lot-status <?= $isExpired ? 'lot-status-expired' : 'lot-status-ok' ?>">
-                            <?= $isExpired ? 'Perime' : 'Actif' ?>
-                        </span>
+                        <?php if ($isExpired): ?>
+                            <span class="lot-status lot-status-expired">Perime</span>
+                        <?php elseif ($isPeremption): ?>
+                            <span class="lot-status lot-status-peremption">Peremption</span>
+                        <?php else: ?>
+                            <span class="lot-status lot-status-ok">Actif</span>
+                        <?php endif; ?>
                     </td>
                     <td><?= htmlspecialchars(date('d/m/Y H:i', strtotime((string) ($lot['opened_at'] ?? date('Y-m-d H:i:s')))), ENT_QUOTES, 'UTF-8') ?></td>
                     <td>
@@ -923,9 +956,19 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
     border-radius: var(--radius-md);
     margin-bottom: 16px;
 }
+.alert-banner-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
 .alert-banner-title {
     font-size: 13px;
     font-weight: 600;
+}
+.alert-banner-summary {
+    font-size: 12px;
+    opacity: 0.9;
 }
 .alert-banner-items {
     display: flex;
@@ -945,6 +988,11 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
 .alert-banner-item-warning {
     background: rgba(234, 179, 8, 0.18);
     color: #92400e;
+}
+.alert-banner-detail-btn {
+    color: #92400e;
+    border-color: rgba(146, 64, 14, 0.2);
+    background: rgba(255, 255, 255, 0.45);
 }
 .text-danger { color: var(--danger); }
 .text-success { color: var(--success); }
@@ -969,6 +1017,10 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
 .lot-status-expired {
     background: rgba(239, 68, 68, 0.16);
     color: var(--danger);
+}
+.lot-status-peremption {
+    background: rgba(250, 204, 21, 0.12);
+    color: #92400e;
 }
 
 .stock-product-form {
@@ -1840,6 +1892,7 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
         const salePrice = parseNumber(productSalePriceInput?.value || '0');
         const saleBelowCost = purchaseUnit > 0 && salePrice < purchaseUnit;
 
+        // Peremption information is informational only in the client. Do not block creation when expiration is within 6 months.
         let expirationTooSoon = false;
         const expirationRaw = String(productExpirationInput?.value || '').trim();
         if (!isEditingProduct && expirationRaw !== '') {
@@ -1879,7 +1932,8 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
         stockProductFields.forEach((field) => setInvalidState(field, false));
         setInvalidState(productSalePriceInput, saleBelowCost);
         setInvalidState(productLotPurchaseInput, saleBelowCost);
-        setInvalidState(productExpirationInput, expirationTooSoon);
+        // Do not mark expiration as invalid on client-side
+        setInvalidState(productExpirationInput, false);
 
         if (duplicateActive) {
             stockProductFields.forEach((field) => setInvalidState(field, true));
@@ -1887,14 +1941,15 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
 
         setFieldError(productSalePriceInput, saleBelowCost ? "Le prix de vente doit etre >= au prix d'achat." : '');
         setFieldError(productLotPurchaseInput, saleBelowCost ? "Le prix d'achat ne peut pas depasser le prix de vente." : '');
-        setFieldError(productExpirationInput, expirationTooSoon ? 'La date d\'expiration doit etre a plus de 6 mois.' : '');
+        // Do not show expiration error on client-side
+        setFieldError(productExpirationInput, '');
         setFieldError(productInitialLotInput, duplicateActive ? 'Un lot identique existe deja.' : '');
         setFieldError(productNameInput, duplicateActive ? 'Un lot identique existe deja.' : '');
         setFormMessage(duplicateActive
             ? 'Ce produit existe deja. Ajoutez simplement la quantite au lot existant.'
             : '');
 
-        const hasError = duplicateActive || saleBelowCost || expirationTooSoon;
+        const hasError = duplicateActive || saleBelowCost;
         if (stockProductSubmit) {
             stockProductSubmit.disabled = hasError;
         }
@@ -2025,7 +2080,13 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
         const costLabel = `${formatDisplay(selectedLot.unit_cost_base || 0, 6)} USD/${selectedLot.base_unit || 'unite'}`;
 
         if (addLotStatusInput) {
-            addLotStatusInput.value = selectedLot.is_expired ? 'Perime' : 'Actif';
+            if (selectedLot.is_expired) {
+                addLotStatusInput.value = 'Perime';
+            } else if (selectedLot.is_in_peremption) {
+                addLotStatusInput.value = 'Peremption';
+            } else {
+                addLotStatusInput.value = 'Actif';
+            }
         }
         if (addLotProductNameInput) {
             addLotProductNameInput.value = sku !== ''
@@ -2166,7 +2227,7 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
         }
         if (productColorInput) {
             productColorInput.addEventListener('input', refreshColorChip);
-            productColorInput.addEventListener('change', refreshColorChip);
+            productColorChip.addEventListener('change', refreshColorChip);
         }
         if (productInitialLotInput) {
             productInitialLotInput.addEventListener('input', () => {
@@ -2195,11 +2256,7 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                 window.alert('Le prix de vente ne peut pas etre inferieur au prix d achat.');
                 return;
             }
-            if (liveState.expirationTooSoon) {
-                event.preventDefault();
-                window.alert('La date d expiration doit etre superieure a 6 mois.');
-                return;
-            }
+            // expirationTooSoon check removed: peremption is informational only
             const name = String(productNameInput?.value || '').trim();
             const qty = parseNumber(productStockQuantityInput?.value || '0');
             const salePrice = parseNumber(productSalePriceInput?.value || '0');
@@ -2325,8 +2382,9 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                                 </form>
                             </div>`
                     : '<span class="text-secondary">Lecture seule</span>';
+                const isPeremption = !!lot.is_in_peremption && !isExpired;
                 return `
-                    <tr class="${isExpired ? 'stock-lot-expired' : ''}">
+                    <tr class="${isExpired ? 'stock-lot-expired' : (isPeremption ? 'stock-lot-peremption' : '')}">
                         <td>${escapeHtml(lot.lot_code || '-')}</td>
                         <td>${escapeHtml(lot.supplier || '-')}</td>
                         <td>${escapeHtml(lot.source_type || '-')}</td>
@@ -2334,7 +2392,7 @@ $stockAlertItems = array_slice($stockAlerts, 0, 3);
                         <td>${formatDisplay(lot.quantity_remaining_base || 0, 2)} ${escapeHtml(lot.base_unit || data.base_unit || '')}</td>
                         <td>$${formatDisplay(lot.unit_cost_base || 0, 6)}</td>
                         <td>${escapeHtml(expirationDisplay)}</td>
-                        <td><span class="lot-status ${isExpired ? 'lot-status-expired' : 'lot-status-ok'}">${isExpired ? 'Perime' : 'Actif'}</span></td>
+                        <td><span class="lot-status ${isExpired ? 'lot-status-expired' : (isPeremption ? 'lot-status-peremption' : 'lot-status-ok')}">${isExpired ? 'Perime' : (isPeremption ? 'Peremption' : 'Actif')}</span></td>
                         <td>${escapeHtml((lot.opened_at || '').replace('T', ' '))}</td>
                         <td>${actionCell}</td>
                     </tr>
