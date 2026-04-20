@@ -106,7 +106,11 @@ class Dashboard extends Model
              FROM invoices
              WHERE company_id = :company_id
                AND status IN (:sent_status, :paid_status, :overdue_status)
-               AND invoice_date BETWEEN :from_date AND :to_date',
+               AND COALESCE(paid_date, invoice_date) BETWEEN :from_date AND :to_date
+               AND NOT EXISTS (
+                    SELECT 1 FROM invoice_payment_allocations a
+                    WHERE a.invoice_id = invoices.id
+               )',
             [
                 'company_id' => $companyId,
                 'sent_status' => 'sent',
@@ -119,7 +123,7 @@ class Dashboard extends Model
 
         $cashTransactionsRow = $this->db->fetchOne(
             'SELECT
-                COALESCE(SUM(CASE WHEN t.type = :income_type THEN j.debit ELSE 0 END), 0) AS income_total,
+                COALESCE(SUM(CASE WHEN t.type IN (:income_type, :debt_payment_type) THEN j.debit ELSE 0 END), 0) AS income_total,
                 COALESCE(SUM(CASE WHEN t.type = :expense_type THEN j.credit ELSE 0 END), 0) AS expense_total
              FROM transactions t
              INNER JOIN journal_entries j ON j.transaction_id = t.id
@@ -132,6 +136,7 @@ class Dashboard extends Model
                 'from_date' => $fromDate,
                 'to_date' => $toDate,
                 'income_type' => 'income',
+                'debt_payment_type' => 'debt_payment',
                 'expense_type' => 'expense',
             ]
         );
@@ -446,11 +451,12 @@ class Dashboard extends Model
         );
 
         foreach ($rows as &$row) {
-            $isIncome = (string) $row['type'] === 'income';
-            $row['amount'] = $isIncome
+            $type = (string) ($row['type'] ?? '');
+            $isDebit = in_array($type, ['income', 'transfer', 'debt_payment'], true);
+            $row['amount'] = $isDebit
                 ? (float) ($row['debit_total'] ?? 0)
                 : (float) ($row['credit_total'] ?? 0);
-            $row['category'] = (string) ($row['account_name'] ?: ucfirst((string) $row['type']));
+            $row['category'] = (string) ($row['account_name'] ?: ucfirst($type));
         }
 
         return $rows;
@@ -475,7 +481,7 @@ class Dashboard extends Model
         $ledgerSql = "
             SELECT
                 i.id AS sort_id,
-                i.invoice_date AS movement_date,
+                COALESCE(i.paid_date, i.invoice_date) AS movement_date,
                 'invoice' AS source,
                 $invoiceDescriptionExpr AS label,
                 CASE
@@ -486,8 +492,12 @@ class Dashboard extends Model
             FROM invoices i
             WHERE i.company_id = :company_id
               AND i.status IN (:sent_status, :paid_status, :overdue_status)
-              AND i.invoice_date BETWEEN :from_date AND :to_date
+              AND COALESCE(i.paid_date, i.invoice_date) BETWEEN :from_date AND :to_date
               AND (i.paid_amount > 0 OR i.status = :paid_status)
+              AND NOT EXISTS (
+                    SELECT 1 FROM invoice_payment_allocations a
+                    WHERE a.invoice_id = i.id
+              )
 
             UNION ALL
 
@@ -728,16 +738,26 @@ class Dashboard extends Model
         );
 
         $invoiceRows = $this->db->fetchAll(
-            'SELECT i.invoice_date AS invoice_date,
-                    COALESCE(SUM(i.total), 0) AS billed_total
+            'SELECT COALESCE(i.paid_date, i.invoice_date) AS movement_date,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN i.paid_amount > 0 THEN i.paid_amount
+                            WHEN i.status = :paid_status THEN i.total
+                            ELSE 0
+                        END
+                    ), 0) AS cash_total
              FROM invoices i
              WHERE i.company_id = :company_id
-               AND i.status IN (:draft_status, :sent_status, :paid_status, :overdue_status)
-               AND i.invoice_date BETWEEN :start_date AND :end_date
-             GROUP BY i.invoice_date',
+               AND i.status IN (:sent_status, :paid_status, :overdue_status)
+               AND COALESCE(i.paid_date, i.invoice_date) BETWEEN :start_date AND :end_date
+               AND (COALESCE(i.paid_amount, 0) > 0 OR i.status = :paid_status)
+               AND NOT EXISTS (
+                    SELECT 1 FROM invoice_payment_allocations a
+                    WHERE a.invoice_id = i.id
+               )
+             GROUP BY movement_date',
             [
                 'company_id' => $companyId,
-                'draft_status' => 'draft',
                 'sent_status' => 'sent',
                 'paid_status' => 'paid',
                 'overdue_status' => 'overdue',
@@ -760,21 +780,26 @@ class Dashboard extends Model
             $debit = (float) ($row['debit_total'] ?? 0);
             $credit = (float) ($row['credit_total'] ?? 0);
 
-            if ($type === 'income') {
+            if (in_array($type, ['income', 'debt_payment'], true)) {
                 $dailyOccasionalIncome[$dateKey] = ($dailyOccasionalIncome[$dateKey] ?? 0.0) + $debit;
             } elseif ($type === 'expense') {
                 $dailyExpenses[$dateKey] = ($dailyExpenses[$dateKey] ?? 0.0) + $credit;
             }
 
-            $dailyNet[$dateKey] = ($dailyNet[$dateKey] ?? 0.0) + ($debit - $credit);
+            if (in_array($type, ['income', 'debt_payment'], true)) {
+                $dailyNet[$dateKey] = ($dailyNet[$dateKey] ?? 0.0) + $debit;
+            } elseif ($type === 'expense') {
+                $dailyNet[$dateKey] = ($dailyNet[$dateKey] ?? 0.0) - $credit;
+            }
         }
         foreach ($invoiceRows as $row) {
-            $key = (string) ($row['invoice_date'] ?? '');
+            $key = (string) ($row['movement_date'] ?? '');
             if ($key === '') {
                 continue;
             }
-            $dailyInvoiceIncome[$key] = ($dailyInvoiceIncome[$key] ?? 0.0) + (float) ($row['billed_total'] ?? 0);
-            $dailyNet[$key] = ($dailyNet[$key] ?? 0.0) + (float) ($row['billed_total'] ?? 0);
+            $cashValue = (float) ($row['cash_total'] ?? 0);
+            $dailyInvoiceIncome[$key] = ($dailyInvoiceIncome[$key] ?? 0.0) + $cashValue;
+            $dailyNet[$key] = ($dailyNet[$key] ?? 0.0) + $cashValue;
         }
 
         $labels = [];

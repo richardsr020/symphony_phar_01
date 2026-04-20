@@ -53,7 +53,7 @@ class AuthController extends Controller
 
         $this->renderAuth('register', [
             'title' => 'Créer un compte',
-            'subtitle' => 'Commencez avec Kombiphar',
+            'subtitle' => 'Commencez avec  phar',
             'authError' => $this->resolveAuthError($_GET['error'] ?? ''),
         ]);
     }

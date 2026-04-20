@@ -14,7 +14,7 @@ $asset = static function (string $path) use ($basePath): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="<?= $csrfToken ?? '' ?>">
 
-<title><?= $title ?? 'Connexion' ?> - Kombiphar</title>
+<title><?= $title ?? 'Connexion' ?> -  phar</title>
 
 <!-- Use system fonts by default to support offline usage. To add local webfonts, place them in public/fonts and update public/css/style.css -->
 
@@ -63,7 +63,7 @@ font-family:'Parisienne',cursive;
 }
 
 .wrapper .text-right::before{
-content:'Kombiphar';
+content:' phar';
 position:absolute;
 top:60px;
 right:-50px;
@@ -276,7 +276,7 @@ color:#15803d;
 <!-- IMAGE DECORATIVE -->
 <img src="<?= $asset('/public/images/login-shape.png') ?>" alt="Background">
 
-<h2 class="text-right">Nous sommes</h2>
+
 
 <?= $content ?>
 

@@ -434,15 +434,23 @@ class InvoicesController extends Controller
             $this->redirect('/invoices?error=permission_denied');
         }
 
-        if ($this->invoiceModel->registerPayment($companyId, $invoiceId, $amount)) {
-            (new Dashboard())->invalidateDashboardCache($companyId);
-            AuditLogger::log($userId, 'invoice_payment_recorded', 'invoices', $invoiceId, null, [
-                'amount' => $amount,
-            ]);
-            $this->redirect('/invoices?success=payment_recorded&view=' . $invoiceId);
+        try {
+            (new \App\Models\Transaction())->createInvoicePaymentForInvoice(
+                $companyId,
+                $userId,
+                $invoiceId,
+                $amount,
+                date('Y-m-d')
+            );
+        } catch (\Throwable $exception) {
+            $this->redirect('/invoices?error=invalid_payment');
         }
 
-        $this->redirect('/invoices?error=invalid_payment');
+        (new Dashboard())->invalidateDashboardCache($companyId);
+        AuditLogger::log($userId, 'invoice_payment_recorded', 'invoices', $invoiceId, null, [
+            'amount' => $amount,
+        ]);
+        $this->redirect('/invoices?success=payment_recorded&view=' . $invoiceId);
     }
 
     public function view($id): void

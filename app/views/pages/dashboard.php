@@ -317,7 +317,7 @@ $formatCurrency = static function ($value): string {
         <!-- AI Insights -->
         <div class="card">
             <div class="card-header">
-                <h3>🔍 Statistiques Kombiphar</h3>
+                <h3>🔍 Statistiques  phar</h3>
                 <span class="badge-ai">IA temps réel</span>
             </div>
             

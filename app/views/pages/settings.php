@@ -2,7 +2,7 @@
 $user = $currentUser ?? [];
 $companyUsers = $companyUsers ?? [];
 $activeTab = (string) ($_GET['tab'] ?? 'profile');
-$allowedTabs = ['profile', 'company', 'team', 'users', 'fiscal', 'security'];
+$allowedTabs = ['profile', 'company', 'stock', 'team', 'users', 'fiscal', 'security'];
 if (!in_array($activeTab, $allowedTabs, true)) {
     $activeTab = 'profile';
 }
@@ -39,6 +39,7 @@ $company = [
 $tabs = [
     ['id' => 'profile', 'label' => 'Profil', 'icon' => 'fas fa-user'],
     ['id' => 'company', 'label' => 'Entreprise', 'icon' => 'fas fa-building'],
+    ['id' => 'stock', 'label' => 'Stock', 'icon' => 'fas fa-boxes-stacked'],
     ['id' => 'team', 'label' => 'Équipe', 'icon' => 'fas fa-users'],
     ['id' => 'users', 'label' => 'Utilisateurs', 'icon' => 'fas fa-shield-alt'],
     ['id' => 'fiscal', 'label' => 'Parametres fiscaux', 'icon' => 'fas fa-file-invoice-dollar'],
@@ -83,6 +84,8 @@ $teamErrors = [
     'user_delete_failed' => 'Impossible de supprimer l\'utilisateur pour le moment.',
     'invalid_role' => 'Role utilisateur invalide.',
     'ai_update_failed' => 'Impossible de sauvegarder la configuration IA.',
+    'invalid_stock_form_payload' => 'Veuillez verifier la configuration du formulaire produit.',
+    'stock_form_update_failed' => 'Impossible de sauvegarder le formulaire produit pour le moment.',
 ];
 $teamSuccess = [
     'profile' => 'Profil mis a jour avec succes.',
@@ -94,6 +97,7 @@ $teamSuccess = [
     'user_password_reset' => 'Mot de passe utilisateur reinitialise.',
     'user_deleted' => 'Utilisateur supprime avec succes.',
     'ai' => 'Configuration IA sauvegardee.',
+    'stock_form' => 'Formulaire produit sauvegarde.',
 ];
 $actionLabels = [
     'company_updated' => 'Entreprise mise a jour',
@@ -122,6 +126,7 @@ $actionLabels = [
     'stock_lot_added' => 'Lot ajoute',
     'stock_lot_updated' => 'Lot reapprovisionne',
     'stock_lot_deleted' => 'Lot supprime',
+    'stock_form_updated' => 'Formulaire produit mis a jour',
     'purchase_order_created' => 'Commande d achat creee',
     'purchase_order_status_updated' => 'Statut commande d achat mis a jour',
     'purchase_order_updated' => 'Commande d achat mise a jour',
@@ -161,6 +166,17 @@ $formatAuditPayload = static function ($payload): array {
 
     return $flatten($decoded);
 };
+
+$productFormConfig = is_array($productFormConfig ?? null) ? $productFormConfig : [];
+if ($productFormConfig === []) {
+    $productFormConfig = \App\Models\ProductFormSettings::defaultConfig();
+}
+
+$pfFields = is_array($productFormConfig['fields'] ?? null) ? $productFormConfig['fields'] : [];
+$pfBaseUnits = is_array($productFormConfig['base_units'] ?? null) ? $productFormConfig['base_units'] : [];
+$pfFormes = is_array($productFormConfig['formes'] ?? null) ? $productFormConfig['formes'] : [];
+$pfDefaults = is_array($productFormConfig['defaults'] ?? null) ? $productFormConfig['defaults'] : [];
+$pfDefaultBaseUnit = (string) ($pfDefaults['base_unit_code'] ?? 'unite');
 ?>
 
 <div class="settings-page">
@@ -199,7 +215,7 @@ $formatAuditPayload = static function ($payload): array {
             <div class="ai-status-mini" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--border-light);">
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
                     <span class="pulse-dot"></span>
-                    <span style="font-weight: 500;">Yakafrika</span>
+                    <span style="font-weight: 500;">Symphony</span>
                 </div>
                 <div style="font-size: 12px; color: var(--text-secondary);">
                     Version 2.1.0 · Mise à jour 20/03/2026
@@ -390,6 +406,178 @@ $formatAuditPayload = static function ($payload): array {
                             <?php if (!$isAdmin): ?>
                             <p style="margin-top:8px; font-size:12px; color: var(--text-secondary);">Seul un administrateur peut modifier ces champs.</p>
                             <?php endif; ?>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div id="tab-stock" class="settings-tab-content <?= $activeTab === 'stock' ? 'active' : '' ?>">
+                <div class="card">
+                    <h3 style="margin-bottom: 10px;">Formulaire de création de produit</h3>
+                    <p style="margin:0 0 18px 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5;">
+                        Configurez les champs affichés dans le stock (par entreprise) : unités de base, formes, libellés et champs optionnels.
+                    </p>
+
+                    <?php
+                        $pfBaseUnitsTextLines = [];
+                        foreach ($pfBaseUnits as $u) {
+                            $code = trim((string) ($u['code'] ?? ''));
+                            if ($code === '') {
+                                continue;
+                            }
+                            $label = trim((string) ($u['label'] ?? ''));
+                            $pfBaseUnitsTextLines[] = $code . '|' . ($label !== '' ? $label : $code);
+                        }
+                        $pfBaseUnitsText = implode("\n", $pfBaseUnitsTextLines);
+                        $pfFormesText = implode("\n", array_map(static fn(string $v): string => trim($v), $pfFormes));
+
+                        $field = static function (string $key) use ($pfFields): array {
+                            $def = is_array($pfFields[$key] ?? null) ? $pfFields[$key] : [];
+                            return [
+                                'enabled' => (bool) ($def['enabled'] ?? true),
+                                'required' => (bool) ($def['required'] ?? false),
+                                'label' => (string) ($def['label'] ?? ''),
+                                'placeholder' => (string) ($def['placeholder'] ?? ''),
+                                'input' => (string) ($def['input'] ?? 'text'),
+                            ];
+                        };
+                        $fName = $field('name');
+                        $fSupplier = $field('supplier');
+                        $fDosage = $field('dosage');
+                        $fForme = $field('forme');
+                        $fPresentation = $field('presentation');
+                        $fBaseUnit = $field('base_unit');
+                    ?>
+
+                    <form method="POST" action="/settings/stock-form" data-async="true" data-async-success="Formulaire produit sauvegarde.">
+                        <input type="hidden" name="csrf_token" value="<?= App\Core\Security::generateCSRF() ?>">
+
+                        <div class="form-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                            <div class="form-group" style="grid-column: 1 / -1;">
+                                <label class="form-label">Unités de base (une par ligne)</label>
+                                <textarea class="form-input" name="pf_base_units" rows="6" placeholder="ex: unite|Unité&#10;kg|Kilogramme"><?= htmlspecialchars($pfBaseUnitsText, ENT_QUOTES, 'UTF-8') ?></textarea>
+                                <p style="margin-top:8px; font-size:12px; color: var(--text-secondary);">Format: <code>code|libellé</code> (le libellé est optionnel).</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Unité de base par défaut</label>
+                                <select class="form-input" name="pf_default_base_unit">
+                                    <?php foreach ($pfBaseUnits as $u): ?>
+                                        <?php
+                                            $code = (string) ($u['code'] ?? '');
+                                            $label = (string) ($u['label'] ?? $code);
+                                            if (trim($code) === '') {
+                                                continue;
+                                            }
+                                        ?>
+                                        <option value="<?= htmlspecialchars($code, ENT_QUOTES, 'UTF-8') ?>" <?= $code === $pfDefaultBaseUnit ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?> (<?= htmlspecialchars($code, ENT_QUOTES, 'UTF-8') ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Formes (une par ligne)</label>
+                                <textarea class="form-input" name="pf_formes" rows="6" placeholder="ex: Type A&#10;Type B"><?= htmlspecialchars($pfFormesText, ENT_QUOTES, 'UTF-8') ?></textarea>
+                                <p style="margin-top:8px; font-size:12px; color: var(--text-secondary);">Utilisées si vous choisissez “Forme” en liste déroulante.</p>
+                            </div>
+
+                            <div class="form-group" style="grid-column: 1 / -1;">
+                                <h4 style="margin: 0 0 12px 0;">Champs du formulaire</h4>
+                                <div style="display:grid; grid-template-columns: 160px 1fr; gap: 10px; align-items:center;">
+                                    <div style="font-weight:600;">Nom *</div>
+                                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                        <input type="text" class="form-input" name="pf_field_name_label" value="<?= htmlspecialchars($fName['label'] !== '' ? $fName['label'] : 'Nom du produit', ENT_QUOTES, 'UTF-8') ?>" placeholder="Libellé">
+                                        <input type="text" class="form-input" name="pf_field_name_placeholder" value="<?= htmlspecialchars($fName['placeholder'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Placeholder">
+                                    </div>
+
+                                    <div style="font-weight:600;">Fournisseur</div>
+                                    <div style="display:grid; grid-template-columns: 240px 1fr; gap: 10px;">
+                                        <div style="display:flex; gap:14px; align-items:center;">
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_supplier_enabled" <?= $fSupplier['enabled'] ? 'checked' : '' ?>>
+                                                <span>Afficher</span>
+                                            </label>
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_supplier_required" <?= $fSupplier['required'] ? 'checked' : '' ?> <?= $fSupplier['enabled'] ? '' : 'disabled' ?>>
+                                                <span>Obligatoire</span>
+                                            </label>
+                                        </div>
+                                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                            <input type="text" class="form-input" name="pf_field_supplier_label" value="<?= htmlspecialchars($fSupplier['label'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Libellé">
+                                            <input type="text" class="form-input" name="pf_field_supplier_placeholder" value="<?= htmlspecialchars($fSupplier['placeholder'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Placeholder">
+                                        </div>
+                                    </div>
+
+                                    <div style="font-weight:600;">Spécification</div>
+                                    <div style="display:grid; grid-template-columns: 240px 1fr; gap: 10px;">
+                                        <div style="display:flex; gap:14px; align-items:center;">
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_dosage_enabled" <?= $fDosage['enabled'] ? 'checked' : '' ?>>
+                                                <span>Afficher</span>
+                                            </label>
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_dosage_required" <?= $fDosage['required'] ? 'checked' : '' ?> <?= $fDosage['enabled'] ? '' : 'disabled' ?>>
+                                                <span>Obligatoire</span>
+                                            </label>
+                                        </div>
+                                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                            <input type="text" class="form-input" name="pf_field_dosage_label" value="<?= htmlspecialchars($fDosage['label'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Libellé">
+                                            <input type="text" class="form-input" name="pf_field_dosage_placeholder" value="<?= htmlspecialchars($fDosage['placeholder'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Placeholder">
+                                        </div>
+                                    </div>
+
+                                    <div style="font-weight:600;">Forme</div>
+                                    <div style="display:grid; grid-template-columns: 240px 1fr; gap: 10px;">
+                                        <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_forme_enabled" <?= $fForme['enabled'] ? 'checked' : '' ?>>
+                                                <span>Afficher</span>
+                                            </label>
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_forme_required" <?= $fForme['required'] ? 'checked' : '' ?> <?= $fForme['enabled'] ? '' : 'disabled' ?>>
+                                                <span>Obligatoire</span>
+                                            </label>
+                                            <select class="form-input" name="pf_field_forme_input" style="max-width: 160px;">
+                                                <option value="text" <?= ($fForme['input'] ?? 'text') === 'text' ? 'selected' : '' ?>>Texte</option>
+                                                <option value="select" <?= ($fForme['input'] ?? 'text') === 'select' ? 'selected' : '' ?>>Liste</option>
+                                            </select>
+                                        </div>
+                                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                            <input type="text" class="form-input" name="pf_field_forme_label" value="<?= htmlspecialchars($fForme['label'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Libellé">
+                                            <input type="text" class="form-input" name="pf_field_forme_placeholder" value="<?= htmlspecialchars($fForme['placeholder'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Placeholder">
+                                        </div>
+                                    </div>
+
+                                    <div style="font-weight:600;">Présentation</div>
+                                    <div style="display:grid; grid-template-columns: 240px 1fr; gap: 10px;">
+                                        <div style="display:flex; gap:14px; align-items:center;">
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_presentation_enabled" <?= $fPresentation['enabled'] ? 'checked' : '' ?>>
+                                                <span>Afficher</span>
+                                            </label>
+                                            <label class="checkbox-item" style="display:flex; gap:10px; align-items:center;">
+                                                <input type="checkbox" name="pf_field_presentation_required" <?= $fPresentation['required'] ? 'checked' : '' ?> <?= $fPresentation['enabled'] ? '' : 'disabled' ?>>
+                                                <span>Obligatoire</span>
+                                            </label>
+                                        </div>
+                                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                                            <input type="text" class="form-input" name="pf_field_presentation_label" value="<?= htmlspecialchars($fPresentation['label'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Libellé">
+                                            <input type="text" class="form-input" name="pf_field_presentation_placeholder" value="<?= htmlspecialchars($fPresentation['placeholder'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Placeholder">
+                                        </div>
+                                    </div>
+
+                                    <div style="font-weight:600;">Unité *</div>
+                                    <div style="display:grid; grid-template-columns: 1fr; gap: 10px;">
+                                        <input type="text" class="form-input" name="pf_field_base_unit_label" value="<?= htmlspecialchars($fBaseUnit['label'] !== '' ? $fBaseUnit['label'] : 'Unité de base', ENT_QUOTES, 'UTF-8') ?>" placeholder="Libellé (ex: Unité, Mesure...)">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 18px;">
+                            <button class="btn btn-primary" type="submit">Enregistrer</button>
                         </div>
                     </form>
                 </div>

@@ -500,8 +500,133 @@ class Transaction extends Model
         $receiptNumber = $this->generateNextReceiptNumber($companyId, (string) $transactionDate);
         $paymentGroupRef = 'PAY-' . $reference;
 
+        $invoiceIdsToBackfill = array_values(array_unique(array_map(
+            static fn(array $allocation): int => (int) ($allocation['invoice_id'] ?? 0),
+            $allocations
+        )));
+        $invoiceIdsToBackfill = array_values(array_filter($invoiceIdsToBackfill, static fn(int $id): bool => $id > 0));
+
+        $backfillByInvoiceId = [];
+        if ($invoiceIdsToBackfill !== []) {
+            $placeholders = [];
+            $params = ['company_id' => $companyId];
+            foreach ($invoiceIdsToBackfill as $index => $iid) {
+                $key = 'iid_' . $index;
+                $placeholders[] = ':' . $key;
+                $params[$key] = $iid;
+            }
+
+            $invoiceRows = $this->db->fetchAll(
+                'SELECT id, invoice_number, invoice_date, paid_date, customer_name, customer_phone, total, paid_amount, status
+                 FROM invoices
+                 WHERE company_id = :company_id
+                   AND id IN (' . implode(', ', $placeholders) . ')',
+                $params
+            );
+
+            $allocRows = $this->db->fetchAll(
+                'SELECT invoice_id, COALESCE(SUM(amount), 0) AS amount
+                 FROM invoice_payment_allocations
+                 WHERE company_id = :company_id
+                   AND invoice_id IN (' . implode(', ', $placeholders) . ')
+                 GROUP BY invoice_id',
+                $params
+            );
+            $allocatedByInvoice = [];
+            foreach ($allocRows as $row) {
+                $allocatedByInvoice[(int) ($row['invoice_id'] ?? 0)] = round((float) ($row['amount'] ?? 0), 2);
+            }
+
+            foreach ($invoiceRows as $invoiceRow) {
+                $iid = (int) ($invoiceRow['id'] ?? 0);
+                if ($iid <= 0) {
+                    continue;
+                }
+
+                $statusValue = (string) ($invoiceRow['status'] ?? '');
+                $total = round((float) ($invoiceRow['total'] ?? 0), 2);
+                $paidRaw = round((float) ($invoiceRow['paid_amount'] ?? 0), 2);
+                $effectivePaid = ($statusValue === 'paid' && $paidRaw <= 0.009) ? $total : $paidRaw;
+                $allocated = (float) ($allocatedByInvoice[$iid] ?? 0.0);
+                $missing = round(max($effectivePaid - $allocated, 0), 2);
+
+                if ($missing <= 0.009) {
+                    continue;
+                }
+
+                $backfillByInvoiceId[$iid] = [
+                    'amount' => $missing,
+                    'invoice_number' => (string) ($invoiceRow['invoice_number'] ?? ''),
+                    'invoice_date' => (string) ($invoiceRow['invoice_date'] ?? ''),
+                    'paid_date' => (string) ($invoiceRow['paid_date'] ?? ''),
+                    'client_name' => trim((string) ($invoiceRow['customer_name'] ?? '')),
+                    'client_phone' => trim((string) ($invoiceRow['customer_phone'] ?? '')),
+                ];
+            }
+        }
+
         $this->db->beginTransaction();
         try {
+            foreach ($backfillByInvoiceId as $iid => $info) {
+                $backfillDate = $this->normalizeDate((string) ($info['paid_date'] ?? ''))
+                    ?? $this->normalizeDate((string) ($info['invoice_date'] ?? ''))
+                    ?? (string) $transactionDate;
+                $backfillAmount = round((float) ($info['amount'] ?? 0), 2);
+                if ($backfillAmount <= 0.009) {
+                    continue;
+                }
+
+                $backfillRef = $this->generateNextReference($companyId, $backfillDate);
+                $backfillReceipt = $this->generateNextReceiptNumber($companyId, $backfillDate);
+                $backfillGroupRef = 'PAY-' . $backfillRef;
+                $backfillLabel = 'Encaissement facture ' . (string) ($info['invoice_number'] ?? '') . ' (historique)';
+                $backfillFiscalPeriodId = (new FiscalPeriod($this->db))->resolvePeriodIdForDate($companyId, $backfillDate);
+
+                $this->db->execute(
+                    'INSERT INTO transactions (company_id, transaction_date, description, reference, type, expense_subcategory, expense_fiscal_subcategory, expense_subcategory_other, status, fiscal_period_id, created_by)
+                     VALUES (:company_id, :transaction_date, :description, :reference, :type, NULL, NULL, NULL, :status, :fiscal_period_id, :created_by)',
+                    [
+                        'company_id' => $companyId,
+                        'transaction_date' => $backfillDate,
+                        'description' => $backfillLabel,
+                        'reference' => $backfillRef,
+                        'type' => 'debt_payment',
+                        'status' => 'posted',
+                        'fiscal_period_id' => $backfillFiscalPeriodId,
+                        'created_by' => $userId,
+                    ]
+                );
+                $backfillTransactionId = $this->db->lastInsertId();
+
+                $this->db->execute(
+                    'INSERT INTO journal_entries (transaction_id, account_id, debit, credit, description)
+                     VALUES (:transaction_id, :account_id, :debit, :credit, :description)',
+                    [
+                        'transaction_id' => $backfillTransactionId,
+                        'account_id' => $accountId,
+                        'debit' => $backfillAmount,
+                        'credit' => 0.0,
+                        'description' => $backfillLabel,
+                    ]
+                );
+
+                $this->db->execute(
+                    'INSERT INTO invoice_payment_allocations (company_id, transaction_id, invoice_id, payment_group_ref, receipt_number, client_name, client_phone, amount, created_by)
+                     VALUES (:company_id, :transaction_id, :invoice_id, :payment_group_ref, :receipt_number, :client_name, :client_phone, :amount, :created_by)',
+                    [
+                        'company_id' => $companyId,
+                        'transaction_id' => $backfillTransactionId,
+                        'invoice_id' => (int) $iid,
+                        'payment_group_ref' => $backfillGroupRef,
+                        'receipt_number' => $backfillReceipt,
+                        'client_name' => (string) ($info['client_name'] ?? '') !== '' ? (string) $info['client_name'] : null,
+                        'client_phone' => (string) ($info['client_phone'] ?? '') !== '' ? (string) $info['client_phone'] : null,
+                        'amount' => $backfillAmount,
+                        'created_by' => $userId > 0 ? $userId : null,
+                    ]
+                );
+            }
+
             $this->db->execute(
                 'INSERT INTO transactions (company_id, transaction_date, description, reference, type, expense_subcategory, expense_fiscal_subcategory, expense_subcategory_other, status, fiscal_period_id, created_by)
                  VALUES (:company_id, :transaction_date, :description, :reference, :type, NULL, NULL, NULL, :status, :fiscal_period_id, :created_by)',
@@ -554,7 +679,7 @@ class Transaction extends Model
                     ]
                 );
 
-                if (!$invoiceModel->registerPayment($companyId, $invoiceId, $paymentAmount)) {
+                if (!$invoiceModel->registerPayment($companyId, $invoiceId, $paymentAmount, (string) $transactionDate)) {
                     throw new \RuntimeException('Echec enregistrement paiement facture.');
                 }
             }
@@ -562,6 +687,215 @@ class Transaction extends Model
             $this->db->commit();
         } catch (\Throwable $exception) {
             $this->db->rollback();
+            throw $exception;
+        }
+
+        return $transactionId;
+    }
+
+    public function createInvoicePaymentForInvoice(
+        int $companyId,
+        int $userId,
+        int $invoiceId,
+        float $amount,
+        ?string $transactionDate = null,
+        ?int $accountId = null,
+        ?string $description = null
+    ): int {
+        $invoiceId = (int) $invoiceId;
+        $amount = round((float) $amount, 2);
+        $transactionDate = $this->normalizeDate((string) ($transactionDate ?? '')) ?? date('Y-m-d');
+
+        if ($invoiceId <= 0 || $amount <= 0) {
+            throw new \InvalidArgumentException('Paiement facture invalide.');
+        }
+
+        $invoice = $this->db->fetchOne(
+            'SELECT id, invoice_number, invoice_date, paid_date, customer_name, customer_phone, total, paid_amount, status
+             FROM invoices
+             WHERE company_id = :company_id
+               AND id = :id
+             LIMIT 1',
+            [
+                'company_id' => $companyId,
+                'id' => $invoiceId,
+            ]
+        );
+
+        if (!is_array($invoice) || $invoice === []) {
+            throw new \InvalidArgumentException('Facture introuvable.');
+        }
+
+        $invoiceNumber = (string) ($invoice['invoice_number'] ?? '');
+        $clientName = trim((string) ($invoice['customer_name'] ?? ''));
+        $clientPhone = trim((string) ($invoice['customer_phone'] ?? ''));
+        $status = (string) ($invoice['status'] ?? '');
+
+        $total = round((float) ($invoice['total'] ?? 0), 2);
+        $paidAmountRaw = round((float) ($invoice['paid_amount'] ?? 0), 2);
+        $effectivePaid = ($status === 'paid' && $paidAmountRaw <= 0.009) ? $total : $paidAmountRaw;
+
+        if ($total <= 0) {
+            throw new \InvalidArgumentException('Facture invalide (total <= 0).');
+        }
+
+        $allocRow = $this->db->fetchOne(
+            'SELECT COALESCE(SUM(amount), 0) AS amount
+             FROM invoice_payment_allocations
+             WHERE company_id = :company_id
+               AND invoice_id = :invoice_id',
+            [
+                'company_id' => $companyId,
+                'invoice_id' => $invoiceId,
+            ]
+        );
+        $allocated = round((float) ($allocRow['amount'] ?? 0), 2);
+
+        $remaining = round(max($total - $effectivePaid, 0), 2);
+        if ($amount > ($remaining + 0.01)) {
+            throw new \InvalidArgumentException('Montant superieur au reste a payer.');
+        }
+
+        $accountModel = new Account($this->db);
+        if ($accountId !== null && (int) $accountId > 0) {
+            $account = $accountModel->findById($companyId, (int) $accountId);
+            if ($account === null) {
+                throw new \InvalidArgumentException('Compte comptable introuvable.');
+            }
+        } else {
+            $accountId = $accountModel->getOrCreateSystemAccount($companyId, 'asset');
+        }
+
+        $pdo = $this->db->getConnection();
+        $ownsTransaction = !$pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->db->beginTransaction();
+        }
+
+        try {
+            $missingAllocation = round(max($effectivePaid - $allocated, 0), 2);
+            if ($missingAllocation > 0.009) {
+                $backfillDate = $this->normalizeDate((string) ($invoice['paid_date'] ?? ''))
+                    ?? $this->normalizeDate((string) ($invoice['invoice_date'] ?? ''))
+                    ?? $transactionDate;
+                $backfillRef = $this->generateNextReference($companyId, $backfillDate);
+                $backfillReceipt = $this->generateNextReceiptNumber($companyId, $backfillDate);
+                $backfillGroupRef = 'PAY-' . $backfillRef;
+                $backfillLabel = $description !== null && trim($description) !== ''
+                    ? trim($description)
+                    : ('Encaissement facture ' . $invoiceNumber . ' (historique)');
+
+                $fiscalPeriodId = (new FiscalPeriod($this->db))->resolvePeriodIdForDate($companyId, $backfillDate);
+                $this->db->execute(
+                    'INSERT INTO transactions (company_id, transaction_date, description, reference, type, expense_subcategory, expense_fiscal_subcategory, expense_subcategory_other, status, fiscal_period_id, created_by)
+                     VALUES (:company_id, :transaction_date, :description, :reference, :type, NULL, NULL, NULL, :status, :fiscal_period_id, :created_by)',
+                    [
+                        'company_id' => $companyId,
+                        'transaction_date' => $backfillDate,
+                        'description' => $backfillLabel,
+                        'reference' => $backfillRef,
+                        'type' => 'debt_payment',
+                        'status' => 'posted',
+                        'fiscal_period_id' => $fiscalPeriodId,
+                        'created_by' => $userId > 0 ? $userId : null,
+                    ]
+                );
+                $backfillTransactionId = $this->db->lastInsertId();
+
+                $this->db->execute(
+                    'INSERT INTO journal_entries (transaction_id, account_id, debit, credit, description)
+                     VALUES (:transaction_id, :account_id, :debit, :credit, :description)',
+                    [
+                        'transaction_id' => $backfillTransactionId,
+                        'account_id' => $accountId,
+                        'debit' => $missingAllocation,
+                        'credit' => 0.0,
+                        'description' => $backfillLabel,
+                    ]
+                );
+
+                $this->db->execute(
+                    'INSERT INTO invoice_payment_allocations (company_id, transaction_id, invoice_id, payment_group_ref, receipt_number, client_name, client_phone, amount, created_by)
+                     VALUES (:company_id, :transaction_id, :invoice_id, :payment_group_ref, :receipt_number, :client_name, :client_phone, :amount, :created_by)',
+                    [
+                        'company_id' => $companyId,
+                        'transaction_id' => $backfillTransactionId,
+                        'invoice_id' => $invoiceId,
+                        'payment_group_ref' => $backfillGroupRef,
+                        'receipt_number' => $backfillReceipt,
+                        'client_name' => $clientName !== '' ? $clientName : null,
+                        'client_phone' => $clientPhone !== '' ? $clientPhone : null,
+                        'amount' => $missingAllocation,
+                        'created_by' => $userId > 0 ? $userId : null,
+                    ]
+                );
+            }
+
+            $reference = $this->generateNextReference($companyId, $transactionDate);
+            $receiptNumber = $this->generateNextReceiptNumber($companyId, $transactionDate);
+            $paymentGroupRef = 'PAY-' . $reference;
+
+            $label = $description !== null && trim($description) !== ''
+                ? trim($description)
+                : ('Encaissement facture ' . $invoiceNumber . ($clientName !== '' ? ' - ' . $clientName : ''));
+
+            $fiscalPeriodId = (new FiscalPeriod($this->db))->resolvePeriodIdForDate($companyId, $transactionDate);
+            $this->db->execute(
+                'INSERT INTO transactions (company_id, transaction_date, description, reference, type, expense_subcategory, expense_fiscal_subcategory, expense_subcategory_other, status, fiscal_period_id, created_by)
+                 VALUES (:company_id, :transaction_date, :description, :reference, :type, NULL, NULL, NULL, :status, :fiscal_period_id, :created_by)',
+                [
+                    'company_id' => $companyId,
+                    'transaction_date' => $transactionDate,
+                    'description' => $label,
+                    'reference' => $reference,
+                    'type' => 'debt_payment',
+                    'status' => 'posted',
+                    'fiscal_period_id' => $fiscalPeriodId,
+                    'created_by' => $userId > 0 ? $userId : null,
+                ]
+            );
+            $transactionId = $this->db->lastInsertId();
+
+            $this->db->execute(
+                'INSERT INTO journal_entries (transaction_id, account_id, debit, credit, description)
+                 VALUES (:transaction_id, :account_id, :debit, :credit, :description)',
+                [
+                    'transaction_id' => $transactionId,
+                    'account_id' => $accountId,
+                    'debit' => $amount,
+                    'credit' => 0.0,
+                    'description' => $label,
+                ]
+            );
+
+            $this->db->execute(
+                'INSERT INTO invoice_payment_allocations (company_id, transaction_id, invoice_id, payment_group_ref, receipt_number, client_name, client_phone, amount, created_by)
+                 VALUES (:company_id, :transaction_id, :invoice_id, :payment_group_ref, :receipt_number, :client_name, :client_phone, :amount, :created_by)',
+                [
+                    'company_id' => $companyId,
+                    'transaction_id' => $transactionId,
+                    'invoice_id' => $invoiceId,
+                    'payment_group_ref' => $paymentGroupRef,
+                    'receipt_number' => $receiptNumber,
+                    'client_name' => $clientName !== '' ? $clientName : null,
+                    'client_phone' => $clientPhone !== '' ? $clientPhone : null,
+                    'amount' => $amount,
+                    'created_by' => $userId > 0 ? $userId : null,
+                ]
+            );
+
+            $invoiceModel = new Invoice($this->db);
+            if (!$invoiceModel->registerPayment($companyId, $invoiceId, $amount, $transactionDate)) {
+                throw new \RuntimeException('Echec enregistrement paiement facture.');
+            }
+
+            if ($ownsTransaction) {
+                $this->db->commit();
+            }
+        } catch (\Throwable $exception) {
+            if ($ownsTransaction && $pdo->inTransaction()) {
+                $this->db->rollback();
+            }
             throw $exception;
         }
 

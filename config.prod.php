@@ -12,7 +12,7 @@ class Config {
     const ENV = 'production';
 
     const SITE_URL = 'https://selleriewinner.ct.ws';
-    const SITE_NAME = 'kombiphar';
+    const SITE_NAME = ' phar';
 
     // Database
     const DB_DRIVER = 'sqlite';

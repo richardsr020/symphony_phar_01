@@ -11,6 +11,7 @@ use App\Models\AiResource;
 use App\Models\Company;
 use App\Models\Dashboard;
 use App\Models\FiscalPeriod;
+use App\Models\ProductFormSettings;
 use App\Models\User;
 
 class SettingsController extends Controller
@@ -29,6 +30,7 @@ class SettingsController extends Controller
         $aiKnowledge = [];
         $auditLogs = [];
         $fiscalPeriods = [];
+        $productFormConfig = [];
         $logFilters = [
             'period_id' => 0,
             'date_from' => '',
@@ -57,6 +59,7 @@ class SettingsController extends Controller
                 'date_to' => $effectiveTo,
                 'user_id' => (int) ($logFilters['user_id'] ?? 0),
             ], 200);
+            $productFormConfig = (new ProductFormSettings())->getForCompany($companyId);
             $logExportUrl = '/settings/logs/export';
             $exportQuery = array_filter([
                 'tab' => 'users',
@@ -79,6 +82,7 @@ class SettingsController extends Controller
             'aiKnowledge' => $aiKnowledge,
             'auditLogs' => $auditLogs,
             'fiscalPeriods' => $fiscalPeriods,
+            'productFormConfig' => $productFormConfig,
             'logFilters' => $logFilters,
             'logExportUrl' => $logExportUrl,
         ]);
@@ -563,5 +567,31 @@ class SettingsController extends Controller
     public function updateAi(): void
     {
         $this->redirect('/settings?tab=security');
+    }
+
+    public function updateStockForm(): void
+    {
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+
+        if ($companyId <= 0) {
+            $this->redirect('/settings?tab=stock&error=company_required');
+        }
+        if (!RolePermissions::canAccessSettings($role)) {
+            $this->redirect('/settings?tab=stock&error=admin_required');
+        }
+
+        try {
+            $config = ProductFormSettings::fromPost($_POST);
+            (new ProductFormSettings())->saveForCompany($companyId, $config);
+            AuditLogger::log((int) ($sessionUser['id'] ?? 0), 'stock_form_updated', 'company_product_form_settings', $companyId);
+        } catch (\InvalidArgumentException $exception) {
+            $this->redirect('/settings?tab=stock&error=invalid_stock_form_payload');
+        } catch (\Throwable $exception) {
+            $this->redirect('/settings?tab=stock&error=stock_form_update_failed');
+        }
+
+        $this->redirect('/settings?tab=stock&saved=stock_form');
     }
 }

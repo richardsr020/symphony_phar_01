@@ -26,7 +26,7 @@ abstract class Controller
         $content = ob_get_clean();
 
         if (!isset($title) || $title === '') {
-            $title = 'Kombiphar';
+            $title = ' phar';
         }
 
         include APP_PATH . '/views/layouts/main.php';

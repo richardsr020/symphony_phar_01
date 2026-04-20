@@ -108,10 +108,10 @@ $companyInfo = [
 <aside class="sidebar" id="sidebar">
     <!-- Logo -->
     <div class="sidebar-logo">
-        <div class="logo-icon">K</div>
+        <div class="logo-icon">S</div>
         <div class="logo-text">
-            <strong>KOMBIPHAR</strong>
-            <span>Gestion Pharmacie</span>
+            <strong>Symphony Business</strong>
+            <span>Gestion Comptable </span>
         </div>
     </div>
     

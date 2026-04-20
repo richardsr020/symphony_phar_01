@@ -16,7 +16,7 @@ class Config {
     
     // URLs
     const SITE_URL = 'https://symphony.local';
-    const SITE_NAME = 'Kombiphar';
+    const SITE_NAME = '';
     
     // Base de données
     // Basculez DB_DRIVER entre 'sqlite' et 'mysql' sans toucher au code métier.

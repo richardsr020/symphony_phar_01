@@ -11,7 +11,7 @@ $asset = static function (string $path) use ($basePath): string {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="<?= App\Core\Security::generateCSRF() ?>">
-    <title><?= $title ?? 'Kombiphar' ?> - <?= Config::SITE_NAME ?></title>
+    <title><?= $title ?? ' phar' ?> - <?= Config::SITE_NAME ?></title>
     
     <!-- Local fonts: using system font stack by default. To add local webfonts, place files under public/fonts and update public/css/style.css -->
     

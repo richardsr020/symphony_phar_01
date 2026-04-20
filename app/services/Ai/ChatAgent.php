@@ -623,8 +623,15 @@ class ChatAgent
                 ];
             }
 
-            $ok = $this->invoiceModel->registerPayment($companyId, $invoiceId, $amount);
-            if (!$ok) {
+            try {
+                (new \App\Models\Transaction())->createInvoicePaymentForInvoice(
+                    $companyId,
+                    $userId,
+                    $invoiceId,
+                    $amount,
+                    date('Y-m-d')
+                );
+            } catch (\Throwable $exception) {
                 return [
                     'text' => 'Paiement non applique (facture/statut/montant invalide).',
                     'blocks' => [['type' => 'text', 'text' => 'Verifiez la facture et son statut.']],

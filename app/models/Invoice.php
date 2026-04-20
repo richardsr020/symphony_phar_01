@@ -865,7 +865,7 @@ class Invoice extends Model
         return true;
     }
 
-    public function registerPayment(int $companyId, int $invoiceId, float $amount): bool
+    public function registerPayment(int $companyId, int $invoiceId, float $amount, ?string $paymentDate = null): bool
     {
         $invoice = $this->findByIdForCompany($companyId, $invoiceId);
         if ($invoice === null) {
@@ -882,22 +882,25 @@ class Invoice extends Model
             return false;
         }
 
-        $currentPaid = (float) ($invoice['paid_amount'] ?? 0);
-        $total = (float) ($invoice['total'] ?? 0);
-        $newPaid = min($total, $currentPaid + $amount);
-        $newStatus = $newPaid >= $total ? 'paid' : 'sent';
+        $currentPaid = round((float) ($invoice['paid_amount'] ?? 0), 2);
+        $total = round((float) ($invoice['total'] ?? 0), 2);
+        $newPaid = round(min($total, $currentPaid + $amount), 2);
+        $newStatus = ($newPaid + 0.0001) >= $total ? 'paid' : 'sent';
+
+        $normalizedPaymentDate = $this->normalizeDate((string) ($paymentDate ?? '')) ?? date('Y-m-d');
 
         $this->db->execute(
             'UPDATE invoices
              SET paid_amount = :paid_amount,
                  status = :status,
-                 paid_date = CASE WHEN :status_paid = :status THEN CURRENT_DATE ELSE paid_date END
+                 paid_date = CASE WHEN :status_paid = :status THEN :payment_date ELSE paid_date END
              WHERE id = :id
                AND company_id = :company_id',
             [
                 'paid_amount' => $newPaid,
                 'status' => $newStatus,
                 'status_paid' => 'paid',
+                'payment_date' => $normalizedPaymentDate,
                 'id' => $invoiceId,
                 'company_id' => $companyId,
             ]

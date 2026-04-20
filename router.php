@@ -115,6 +115,7 @@ class Router {
         $this->addRoute('POST', '/settings/profile', 'SettingsController@updateProfile', ['auth', 'admin']);
         $this->addRoute('POST', '/settings/fiscal', 'SettingsController@updateFiscal', ['auth', 'admin']);
         $this->addRoute('POST', '/settings/ai', 'SettingsController@updateAi', ['auth', 'admin']);
+        $this->addRoute('POST', '/settings/stock-form', 'SettingsController@updateStockForm', ['auth', 'admin']);
         $this->addRoute('GET', '/settings/logs/export', 'SettingsController@exportLogs', ['auth', 'admin']);
         $this->addRoute('POST', '/admin/users', 'SettingsController@createUser', ['auth', 'admin']);
         $this->addRoute('POST', '/admin/users/{id}/status', 'SettingsController@updateUserStatus', ['auth', 'admin']);

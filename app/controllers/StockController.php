@@ -10,6 +10,7 @@ use App\Core\Session;
 use App\Models\Company;
 use App\Models\Dashboard;
 use App\Models\Product;
+use App\Models\ProductFormSettings;
 
 class StockController extends Controller
 {
@@ -55,6 +56,7 @@ class StockController extends Controller
             'alerts' => (new Dashboard())->getAlerts($companyId, 8),
             'editingProduct' => $editingProduct,
             'nextSkuPreview' => $this->productModel->previewNextSku($companyId),
+            'productFormConfig' => (new ProductFormSettings())->getForCompany($companyId),
             'canManageStock' => $canManageStock,
             'supplierOptions' => $this->productModel->getSuppliersByCompany($companyId),
             'flashSuccess' => $this->resolveSuccess((string) ($_GET['success'] ?? '')),

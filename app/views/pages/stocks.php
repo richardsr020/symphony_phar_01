@@ -211,32 +211,37 @@ foreach ($openLots as $lotItem) {
     ];
 }
 
-$defaultFormeOptions = [
-    'comprime',
-    'gelule',
-    'sirop',
-    'suspension',
-    'injectable',
-    'pommade',
-    'creme',
-    'gouttes',
-    'solution',
-    'suppositoire',
-];
+$productFormConfig = is_array($productFormConfig ?? null) ? $productFormConfig : [];
+if ($productFormConfig === []) {
+    $productFormConfig = \App\Models\ProductFormSettings::defaultConfig();
+}
+$pfFields = is_array($productFormConfig['fields'] ?? null) ? $productFormConfig['fields'] : [];
+$pfBaseUnits = is_array($productFormConfig['base_units'] ?? null) ? $productFormConfig['base_units'] : [];
+$pfFormes = is_array($productFormConfig['formes'] ?? null) ? $productFormConfig['formes'] : [];
+$pfDefaults = is_array($productFormConfig['defaults'] ?? null) ? $productFormConfig['defaults'] : [];
+$pfDefaultBaseUnit = (string) ($pfDefaults['base_unit_code'] ?? 'unite');
 
-$presentationChoiceOptions = [
-    'plaquette' => 'Plaquette',
-    'boite' => 'Boite',
-    'ampoule' => 'Ampoule',
-    'flacon' => 'Flacon',
-    'sachet' => 'Sachet',
-    'tube' => 'Tube',
-    'pot' => 'Pot',
-    'blister' => 'Blister',
-    'bouteille' => 'Bouteille',
-    'unite' => 'Unite',
-    'autre' => 'Autre (a detailler)',
-];
+$pfName = is_array($pfFields['name'] ?? null) ? $pfFields['name'] : [];
+$pfSupplier = is_array($pfFields['supplier'] ?? null) ? $pfFields['supplier'] : [];
+$pfDosage = is_array($pfFields['dosage'] ?? null) ? $pfFields['dosage'] : [];
+$pfForme = is_array($pfFields['forme'] ?? null) ? $pfFields['forme'] : [];
+$pfPresentation = is_array($pfFields['presentation'] ?? null) ? $pfFields['presentation'] : [];
+$pfBaseUnit = is_array($pfFields['base_unit'] ?? null) ? $pfFields['base_unit'] : [];
+
+$showSupplierField = (bool) ($pfSupplier['enabled'] ?? true);
+$showDosageField = (bool) ($pfDosage['enabled'] ?? true);
+$showFormeField = (bool) ($pfForme['enabled'] ?? true);
+$showPresentationField = (bool) ($pfPresentation['enabled'] ?? true);
+
+$supplierRequired = $showSupplierField && (bool) ($pfSupplier['required'] ?? false);
+$dosageRequired = $showDosageField && (bool) ($pfDosage['required'] ?? false);
+$formeRequired = $showFormeField && (bool) ($pfForme['required'] ?? false);
+$presentationRequired = $showPresentationField && (bool) ($pfPresentation['required'] ?? false);
+
+$formeInputType = strtolower(trim((string) ($pfForme['input'] ?? 'text')));
+if (!in_array($formeInputType, ['text', 'select'], true)) {
+    $formeInputType = 'text';
+}
 
 $brandSuggestions = [];
 $dosageSuggestions = [];
@@ -386,24 +391,9 @@ $stockAlertCount = count($stockAlerts);
             </div>
             <div class="stock-modal-body">
                 <div id="product-form-card">
-                    <?php
-                        $editingPresentationRaw = trim((string) ($editingProduct['presentation'] ?? ''));
-                        $editingPresentationChoice = 'boite';
-                        $editingPresentationOther = '';
-                        if ($editingPresentationRaw !== '') {
-                            $normalizedPresentation = strtolower($editingPresentationRaw);
-                            if (isset($presentationChoiceOptions[$normalizedPresentation]) && $normalizedPresentation !== 'autre') {
-                                $editingPresentationChoice = $normalizedPresentation;
-                            } else {
-                                $editingPresentationChoice = 'autre';
-                                $editingPresentationOther = $editingPresentationRaw;
-                            }
-                        }
-                    ?>
                     <form method="POST" action="<?= is_array($editingProduct) ? '/stock/update/' . (int) $editingProduct['id'] : '/stock/store' ?>" data-async="true" data-async-success="<?= is_array($editingProduct) ? 'Produit mis a jour.' : 'Lot cree.' ?>" class="stock-product-form" id="stock-product-form">
                         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="purchase_price" id="product-purchase-unit-base" value="<?= htmlspecialchars(number_format((float) ($editingProduct['purchase_price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
-                        <input type="hidden" name="base_unit_code" id="product-base-unit" value="<?= htmlspecialchars((string) ($editingProduct['unit'] ?? 'unite'), ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="min_stock" id="product-min-stock" value="<?= htmlspecialchars(number_format((float) ($editingProduct['min_stock'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" id="product-sku-preview" value="<?= htmlspecialchars((string) (is_array($editingProduct) ? ($editingProduct['sku'] ?? '-') : $nextSkuPreview), ENT_QUOTES, 'UTF-8') ?>">
 
@@ -413,35 +403,91 @@ $stockAlertCount = count($stockAlerts);
                                 <h4>Produit</h4>
                                 <div class="stock-grid">
                                     <label class="filter-group stock-field-large">
-                                        <span>Nom du produit *</span>
-                                        <input class="filter-input" id="product-name" type="text" name="name" required value="<?= htmlspecialchars((string) ($editingProduct['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: Paracetamole">
+                                        <span><?= htmlspecialchars((string) ($pfName['label'] ?? 'Nom du produit'), ENT_QUOTES, 'UTF-8') ?> *</span>
+                                        <input class="filter-input" id="product-name" type="text" name="name" required value="<?= htmlspecialchars((string) ($editingProduct['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= htmlspecialchars((string) ($pfName['placeholder'] ?? 'Ex: Produit A'), ENT_QUOTES, 'UTF-8') ?>">
                                         <div class="field-error" data-error-for="product-name"></div>
                                     </label>
 
+                                    <?php if ($showSupplierField): ?>
                                     <label class="filter-group stock-field-medium">
-                                        <span>Fournisseur</span>
-                                        <input class="filter-input" id="product-supplier" type="text" name="supplier" value="<?= htmlspecialchars((string) ($editingProduct['supplier'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: Pharma RDC">
+                                        <span><?= htmlspecialchars((string) ($pfSupplier['label'] ?? 'Fournisseur'), ENT_QUOTES, 'UTF-8') ?><?= $supplierRequired ? ' *' : '' ?></span>
+                                        <input class="filter-input" id="product-supplier" type="text" name="supplier" value="<?= htmlspecialchars((string) ($editingProduct['supplier'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= htmlspecialchars((string) ($pfSupplier['placeholder'] ?? 'Ex: Fournisseur A'), ENT_QUOTES, 'UTF-8') ?>" <?= $supplierRequired ? 'required' : '' ?>>
                                     </label>
+                                    <?php endif; ?>
 
+                                    <?php if ($showDosageField): ?>
                                     <label class="filter-group stock-field-medium">
-                                        <span>Dosage</span>
-                                        <input class="filter-input" id="product-dosage" type="text" list="product-dosage-suggestions" name="dosage" value="<?= htmlspecialchars((string) ($editingProduct['dosage'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: 500 mg">
+                                        <span><?= htmlspecialchars((string) ($pfDosage['label'] ?? 'Spécification'), ENT_QUOTES, 'UTF-8') ?><?= $dosageRequired ? ' *' : '' ?></span>
+                                        <input class="filter-input" id="product-dosage" type="text" list="product-dosage-suggestions" name="dosage" value="<?= htmlspecialchars((string) ($editingProduct['dosage'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= htmlspecialchars((string) ($pfDosage['placeholder'] ?? 'Ex: Variante / dimension / référence'), ENT_QUOTES, 'UTF-8') ?>" <?= $dosageRequired ? 'required' : '' ?>>
                                     </label>
+                                    <?php endif; ?>
 
+                                    <?php if ($showFormeField): ?>
                                     <label class="filter-group stock-field-medium">
-                                        <span>Forme</span>
-                                        <input class="filter-input" id="product-forme" type="text" list="product-forme-suggestions" name="forme" value="<?= htmlspecialchars((string) ($editingProduct['forme'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Ex: comprime">
+                                        <span><?= htmlspecialchars((string) ($pfForme['label'] ?? 'Forme'), ENT_QUOTES, 'UTF-8') ?><?= $formeRequired ? ' *' : '' ?></span>
+                                        <?php
+                                            $editingFormeRaw = trim((string) ($editingProduct['forme'] ?? ''));
+                                            $hasEditingFormeInList = $editingFormeRaw !== '' && in_array($editingFormeRaw, $pfFormes, true);
+                                        ?>
+                                        <?php if ($formeInputType === 'select'): ?>
+                                            <select class="filter-select" id="product-forme" name="forme" <?= $formeRequired ? 'required' : '' ?>>
+                                                <option value="">Choisir...</option>
+                                                <?php if ($editingFormeRaw !== '' && !$hasEditingFormeInList): ?>
+                                                    <option value="<?= htmlspecialchars($editingFormeRaw, ENT_QUOTES, 'UTF-8') ?>" selected><?= htmlspecialchars($editingFormeRaw, ENT_QUOTES, 'UTF-8') ?></option>
+                                                <?php endif; ?>
+                                                <?php foreach ($pfFormes as $formeOption): ?>
+                                                    <?php $formeOption = (string) $formeOption; ?>
+                                                    <option value="<?= htmlspecialchars($formeOption, ENT_QUOTES, 'UTF-8') ?>" <?= $formeOption === $editingFormeRaw ? 'selected' : '' ?>>
+                                                        <?= htmlspecialchars($formeOption, ENT_QUOTES, 'UTF-8') ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        <?php else: ?>
+                                            <input class="filter-input" id="product-forme" type="text" list="product-forme-suggestions" name="forme" value="<?= htmlspecialchars($editingFormeRaw, ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= htmlspecialchars((string) ($pfForme['placeholder'] ?? 'Ex: Type / variante'), ENT_QUOTES, 'UTF-8') ?>" <?= $formeRequired ? 'required' : '' ?>>
+                                        <?php endif; ?>
                                     </label>
+                                    <?php endif; ?>
 
+                                    <?php if ($showPresentationField): ?>
                                     <label class="filter-group stock-field-large">
-                                        <span>Presentation / Unite de base *</span>
-                                        <select class="filter-select" id="product-presentation-choice" required>
-                                            <?php foreach ($presentationChoiceOptions as $choiceKey => $choiceLabel): ?>
-                                            <option value="<?= htmlspecialchars((string) $choiceKey, ENT_QUOTES, 'UTF-8') ?>" <?= $editingPresentationChoice === $choiceKey ? 'selected' : '' ?>><?= htmlspecialchars((string) $choiceLabel, ENT_QUOTES, 'UTF-8') ?></option>
+                                        <span><?= htmlspecialchars((string) ($pfPresentation['label'] ?? 'Présentation'), ENT_QUOTES, 'UTF-8') ?><?= $presentationRequired ? ' *' : '' ?></span>
+                                        <input class="filter-input" id="product-presentation" type="text" name="presentation" list="product-presentation-suggestions" value="<?= htmlspecialchars((string) ($editingProduct['presentation'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= htmlspecialchars((string) ($pfPresentation['placeholder'] ?? 'Ex: Conditionnement / détail'), ENT_QUOTES, 'UTF-8') ?>" <?= $presentationRequired ? 'required' : '' ?>>
+                                    </label>
+                                    <?php endif; ?>
+
+                                    <label class="filter-group stock-field-medium">
+                                        <span><?= htmlspecialchars((string) ($pfBaseUnit['label'] ?? 'Unité de base'), ENT_QUOTES, 'UTF-8') ?> *</span>
+                                        <?php
+                                            $editingBaseUnit = trim((string) ($editingProduct['unit'] ?? ''));
+                                            $selectedBaseUnit = $editingBaseUnit !== '' ? $editingBaseUnit : $pfDefaultBaseUnit;
+                                            $baseUnitCodes = [];
+                                            foreach ($pfBaseUnits as $u) {
+                                                $code = trim((string) ($u['code'] ?? ''));
+                                                if ($code !== '') {
+                                                    $baseUnitCodes[$code] = true;
+                                                }
+                                            }
+                                        ?>
+                                        <select class="filter-select" id="product-base-unit" name="base_unit_code" required>
+                                            <?php if ($selectedBaseUnit !== '' && !isset($baseUnitCodes[$selectedBaseUnit])): ?>
+                                                <option value="<?= htmlspecialchars($selectedBaseUnit, ENT_QUOTES, 'UTF-8') ?>" selected><?= htmlspecialchars($selectedBaseUnit, ENT_QUOTES, 'UTF-8') ?> (actuel)</option>
+                                            <?php endif; ?>
+                                            <?php foreach ($pfBaseUnits as $u): ?>
+                                                <?php
+                                                    $code = trim((string) ($u['code'] ?? ''));
+                                                    if ($code === '') {
+                                                        continue;
+                                                    }
+                                                    $label = trim((string) ($u['label'] ?? ''));
+                                                    if ($label === '') {
+                                                        $label = $code;
+                                                    }
+                                                ?>
+                                                <option value="<?= htmlspecialchars($code, ENT_QUOTES, 'UTF-8') ?>" <?= $code === $selectedBaseUnit ? 'selected' : '' ?>>
+                                                    <?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?> (<?= htmlspecialchars($code, ENT_QUOTES, 'UTF-8') ?>)
+                                                </option>
                                             <?php endforeach; ?>
                                         </select>
-                                        <input class="filter-input" id="product-presentation-other" type="text" value="<?= htmlspecialchars((string) $editingPresentationOther, ENT_QUOTES, 'UTF-8') ?>" placeholder="Detaillez la categorie" style="<?= $editingPresentationChoice === 'autre' ? '' : 'display:none;' ?>">
-                                        <input type="hidden" id="product-presentation" name="presentation" value="<?= htmlspecialchars((string) $editingPresentationRaw, ENT_QUOTES, 'UTF-8') ?>">
                                     </label>
                                 </div>
                             </section>
@@ -511,11 +557,21 @@ $stockAlertCount = count($stockAlerts);
                         <?php endforeach; ?>
                     </datalist>
 
-                    <datalist id="product-forme-suggestions">
-                        <?php foreach ($defaultFormeOptions as $defaultForme): ?>
-                        <option value="<?= htmlspecialchars((string) $defaultForme, ENT_QUOTES, 'UTF-8') ?>">
+                    <?php if ($showPresentationField): ?>
+                    <datalist id="product-presentation-suggestions">
+                        <?php foreach ($presentationSuggestions as $presentationSuggestion): ?>
+                        <option value="<?= htmlspecialchars((string) $presentationSuggestion, ENT_QUOTES, 'UTF-8') ?>">
                         <?php endforeach; ?>
                     </datalist>
+                    <?php endif; ?>
+
+                    <?php if ($showFormeField && $formeInputType === 'text'): ?>
+                    <datalist id="product-forme-suggestions">
+                        <?php foreach ($pfFormes as $formeOption): ?>
+                        <option value="<?= htmlspecialchars((string) $formeOption, ENT_QUOTES, 'UTF-8') ?>">
+                        <?php endforeach; ?>
+                    </datalist>
+                    <?php endif; ?>
 
                     <?php if (!is_array($editingProduct)): ?>
                     <hr style="margin:18px 0;border:none;border-top:1px solid var(--border-light);">
@@ -1429,34 +1485,62 @@ $stockAlertCount = count($stockAlerts);
     const summarySaleUnitNode = document.getElementById('summary-sale-unit');
     const summaryMarginNode = document.getElementById('summary-margin');
     const sectionButtons = Array.from(document.querySelectorAll('.stock-section-btn'));
-    const unitMap = <?= json_encode($productUnitMap, JSON_UNESCAPED_UNICODE) ?>;
-    const productMetaMap = <?= json_encode($productMetaMap, JSON_UNESCAPED_UNICODE) ?>;
-    const productDetailsMap = <?= json_encode($productDetailsMap, JSON_UNESCAPED_UNICODE) ?>;
-    const lotDetailsMap = <?= json_encode($lotDetailsMap, JSON_UNESCAPED_UNICODE) ?>;
-    const lotCatalog = <?= json_encode($lotCatalog, JSON_UNESCAPED_UNICODE) ?>;
-    const isEditingProduct = <?= is_array($editingProduct) ? 'true' : 'false' ?>;
-    const canManageStock = <?= $canManageStock ? 'true' : 'false' ?>;
-    const stockCsrfToken = <?= json_encode($csrfToken, JSON_UNESCAPED_UNICODE) ?>;
-    const defaultSaleMargin = 0.3;
-    const savedMarginRateRaw = parseFloat(localStorage.getItem('stock.form.margin_rate') || '');
+	    const unitMap = <?= json_encode($productUnitMap, JSON_UNESCAPED_UNICODE) ?>;
+	    const productMetaMap = <?= json_encode($productMetaMap, JSON_UNESCAPED_UNICODE) ?>;
+	    const productDetailsMap = <?= json_encode($productDetailsMap, JSON_UNESCAPED_UNICODE) ?>;
+	    const lotDetailsMap = <?= json_encode($lotDetailsMap, JSON_UNESCAPED_UNICODE) ?>;
+	    const lotCatalog = <?= json_encode($lotCatalog, JSON_UNESCAPED_UNICODE) ?>;
+	    const productFormFields = <?= json_encode([
+	        'name' => [
+	            'enabled' => true,
+	            'label' => (string) (trim((string) ($pfName['label'] ?? '')) !== '' ? $pfName['label'] : 'Nom du produit'),
+	        ],
+	        'supplier' => [
+	            'enabled' => $showSupplierField,
+	            'label' => (string) (trim((string) ($pfSupplier['label'] ?? '')) !== '' ? $pfSupplier['label'] : 'Fournisseur'),
+	        ],
+	        'dosage' => [
+	            'enabled' => $showDosageField,
+	            'label' => (string) (trim((string) ($pfDosage['label'] ?? '')) !== '' ? $pfDosage['label'] : 'Spécification'),
+	        ],
+	        'forme' => [
+	            'enabled' => $showFormeField,
+	            'label' => (string) (trim((string) ($pfForme['label'] ?? '')) !== '' ? $pfForme['label'] : 'Forme'),
+	        ],
+	        'presentation' => [
+	            'enabled' => $showPresentationField,
+	            'label' => (string) (trim((string) ($pfPresentation['label'] ?? '')) !== '' ? $pfPresentation['label'] : 'Présentation'),
+	        ],
+	        'base_unit' => [
+	            'enabled' => true,
+	            'label' => (string) (trim((string) ($pfBaseUnit['label'] ?? '')) !== '' ? $pfBaseUnit['label'] : 'Unité de base'),
+	        ],
+	    ], JSON_UNESCAPED_UNICODE) ?>;
+	    const baseUnitLabelMap = <?= json_encode(array_reduce($pfBaseUnits, static function (array $carry, $u): array {
+	        if (!is_array($u)) {
+	            return $carry;
+	        }
+	        $code = trim((string) ($u['code'] ?? ''));
+	        if ($code === '') {
+	            return $carry;
+	        }
+	        $label = trim((string) ($u['label'] ?? ''));
+	        if ($label === '') {
+	            $label = $code;
+	        }
+	        $carry[$code] = $label;
+	        return $carry;
+	    }, []), JSON_UNESCAPED_UNICODE) ?>;
+	    const isEditingProduct = <?= is_array($editingProduct) ? 'true' : 'false' ?>;
+	    const canManageStock = <?= $canManageStock ? 'true' : 'false' ?>;
+	    const stockCsrfToken = <?= json_encode($csrfToken, JSON_UNESCAPED_UNICODE) ?>;
+	    const defaultSaleMargin = 0.3;
+	    const savedMarginRateRaw = parseFloat(localStorage.getItem('stock.form.margin_rate') || '');
     const lastMarginRate = Number.isFinite(savedMarginRateRaw) ? Math.max(0, savedMarginRateRaw) : defaultSaleMargin;
-    const unitCodeMapByPresentation = {
-        plaquette: 'plaquette',
-        boite: 'boite',
-        ampoule: 'ampoule',
-        flacon: 'flacon',
-        sachet: 'sachet',
-        tube: 'tube',
-        pot: 'pot',
-        blister: 'blister',
-        bouteille: 'bouteille',
-        unite: 'unite',
-    };
     let salePriceManuallyEdited = isEditingProduct;
     let minStockManuallyEdited = isEditingProduct;
     let dosageManuallyEdited = isEditingProduct;
     let formeManuallyEdited = isEditingProduct;
-    let presentationManuallyEdited = isEditingProduct;
     let baseUnitManuallyEdited = isEditingProduct;
     const parseNumber = (value) => {
         const n = parseFloat(String(value).replace(',', '.'));
@@ -1561,51 +1645,8 @@ $stockAlertCount = count($stockAlerts);
     );
 
     const syncPresentationAndBaseUnit = () => {
-        const choice = String(productPresentationChoiceSelect?.value || 'boite').toLowerCase();
-        const otherValue = String(productPresentationOtherInput?.value || '').trim();
-        const shouldShowOther = choice === 'autre';
-        if (productPresentationOtherInput) {
-            productPresentationOtherInput.style.display = shouldShowOther ? '' : 'none';
-        }
-
-        let presentationLabel = choice;
-        let unitCode = unitCodeMapByPresentation[choice] || 'unite';
-
-        if (shouldShowOther) {
-            presentationLabel = otherValue;
-            const normalizedOther = normalizeUnitCodeClient(otherValue);
-            unitCode = normalizedOther !== '' ? normalizedOther : 'unite';
-        }
-
-        if (productPresentationInput) {
-            setInputValue(productPresentationInput, presentationLabel);
-        }
-        if (productBaseUnitSelect && (!baseUnitManuallyEdited || parseNumber(productStockQuantityInput?.value || '0') <= 0 || !isEditingProduct)) {
-            setInputValue(productBaseUnitSelect, unitCode);
-        }
-    };
-
-    const applyPresentationValueToControls = (value) => {
-        const normalized = String(value || '').trim().toLowerCase();
-        if (!productPresentationChoiceSelect) {
-            if (productPresentationInput) {
-                setInputValue(productPresentationInput, String(value || '').trim());
-            }
-            return;
-        }
-
-        if (normalized !== '' && Object.prototype.hasOwnProperty.call(unitCodeMapByPresentation, normalized)) {
-            setInputValue(productPresentationChoiceSelect, normalized);
-            if (productPresentationOtherInput) {
-                setInputValue(productPresentationOtherInput, '');
-            }
-        } else {
-            setInputValue(productPresentationChoiceSelect, 'autre');
-            if (productPresentationOtherInput) {
-                setInputValue(productPresentationOtherInput, String(value || '').trim());
-            }
-        }
-        syncPresentationAndBaseUnit();
+        // Presentation is a free text field and base unit is explicitly selected by the user.
+        // This function is kept to avoid breaking older client logic paths.
     };
 
     const inferDosageFromName = (name) => {
@@ -1617,76 +1658,53 @@ $stockAlertCount = count($stockAlerts);
         return `${String(match[1] || '').replace(',', '.')} ${String(match[2] || '').toLowerCase()}`;
     };
 
-    const inferFormeFromName = (name) => {
-        const normalized = String(name || '').toLowerCase();
-        const candidates = [
-            ['comprime', ['comprime', 'tablet']],
-            ['gelule', ['gelule', 'capsule']],
-            ['sirop', ['sirop', 'syrup']],
-            ['injectable', ['injectable', 'ampoule', 'injection']],
-            ['pommade', ['pommade', 'ointment']],
-            ['creme', ['creme', 'cream']],
-            ['gouttes', ['gouttes', 'drop']],
-            ['solution', ['solution']],
-        ];
-        for (const [label, keywords] of candidates) {
-            if (keywords.some((keyword) => normalized.includes(keyword))) {
-                return label;
-            }
-        }
-        return '';
-    };
+	    const refreshProductSummary = () => {
+	        if (!productSummaryText) {
+	            return;
+	        }
+	        const nameValue = String(productNameInput?.value || '').trim() || 'Produit sans nom';
+	        const supplierValue = String(productSupplierInput?.value || '').trim();
+	        const dosageValue = String(productDosageInput?.value || '').trim();
+	        const formeValue = String(productFormeInput?.value || '').trim();
+	        const presentationValue = String(productPresentationInput?.value || '').trim();
+	        const qty = parseNumber(productStockQuantityInput?.value || '0');
+	        const lotPurchase = parseNumber(productLotPurchaseInput?.value || '0');
+	        const salePrice = parseNumber(productSalePriceInput?.value || '0');
+	        const minStock = parseNumber(productMinStockInput?.value || '0');
+	        const purchaseUnit = parseNumber(productPurchaseUnitBaseInput?.value || '0');
+	        const baseUnit = String(productBaseUnitSelect?.value || 'unite');
+	        const sku = String(productSkuPreviewInput?.value || '-').trim() || '-';
+	        const lotCode = String(productInitialLotInput?.value || '').trim();
+	        const marginRate = purchaseUnit > 0 ? ((salePrice - purchaseUnit) / purchaseUnit) * 100 : 0;
 
-    const suggestBaseUnitFromForme = (forme) => {
-        const normalized = String(forme || '').toLowerCase();
-        if (normalized === '') {
-            return 'unite';
-        }
-        if (['sirop', 'suspension', 'solution', 'gouttes'].includes(normalized)) {
-            return 'l';
-        }
-        return 'unite';
-    };
+	        const getFieldLabel = (key, fallback) => String(productFormFields?.[key]?.label || fallback).trim() || fallback;
+	        const isFieldEnabled = (key) => !!productFormFields?.[key]?.enabled;
 
-    const refreshProductSummary = () => {
-        if (!productSummaryText) {
-            return;
-        }
-        const baseName = String(productNameInput?.value || '').trim() || 'Produit sans nom';
-        const supplier = String(productSupplierInput?.value || '').trim();
-        const name = supplier !== '' && !baseName.toLowerCase().includes(supplier.toLowerCase())
-            ? `${baseName} - ${supplier}`
-            : baseName;
-        const dosage = String(productDosageInput?.value || '').trim();
-        const forme = String(productFormeInput?.value || '').trim();
-        const presentation = String(productPresentationInput?.value || '').trim() || '-';
-        const qty = parseNumber(productStockQuantityInput?.value || '0');
-        const lotPurchase = parseNumber(productLotPurchaseInput?.value || '0');
-        const salePrice = parseNumber(productSalePriceInput?.value || '0');
-        const minStock = parseNumber(productMinStockInput?.value || '0');
-        const purchaseUnit = parseNumber(productPurchaseUnitBaseInput?.value || '0');
-        const baseUnit = String(productBaseUnitSelect?.value || 'unite');
-        const sku = String(productSkuPreviewInput?.value || '-').trim() || '-';
-        const lotCode = String(productInitialLotInput?.value || '').trim();
-        const marginRate = purchaseUnit > 0 ? ((salePrice - purchaseUnit) / purchaseUnit) * 100 : 0;
+	        const baseUnitDisplay = String(baseUnitLabelMap?.[baseUnit] || baseUnit || '-').trim() || '-';
 
-        const sentenceParts = [
-            `Vous créez ${name}`,
-            dosage !== '' ? `dosage ${dosage}` : '',
-            forme !== '' ? `en forme ${forme}` : '',
-            `presente en ${presentation}.`,
-            `Lot initial ${formatDisplay(qty, 2)} ${baseUnit}.`,
-            `Achat lot ${formatDisplay(lotPurchase, 2)} USD, vente unitaire ${formatDisplay(salePrice, 2)} USD.`,
-        ].filter((chunk) => chunk !== '');
+	        const productChunks = [
+	            `${getFieldLabel('name', 'Nom du produit')}: ${nameValue}`,
+	            isFieldEnabled('supplier') && supplierValue !== '' ? `${getFieldLabel('supplier', 'Fournisseur')}: ${supplierValue}` : '',
+	            isFieldEnabled('dosage') && dosageValue !== '' ? `${getFieldLabel('dosage', 'Spécification')}: ${dosageValue}` : '',
+	            isFieldEnabled('forme') && formeValue !== '' ? `${getFieldLabel('forme', 'Forme')}: ${formeValue}` : '',
+	            isFieldEnabled('presentation') && presentationValue !== '' ? `${getFieldLabel('presentation', 'Présentation')}: ${presentationValue}` : '',
+	            `${getFieldLabel('base_unit', 'Unité de base')}: ${baseUnitDisplay}`,
+	        ].filter((chunk) => chunk !== '');
 
-        productSummaryText.textContent = sentenceParts.join(' ');
+	        const sentenceParts = [
+	            `${productChunks.join(' — ')}.`,
+	            `Lot initial ${formatDisplay(qty, 2)} ${baseUnitDisplay}.`,
+	            `Achat lot ${formatDisplay(lotPurchase, 2)} USD, vente unitaire ${formatDisplay(salePrice, 2)} USD.`,
+	        ].filter((chunk) => chunk !== '');
 
-        if (summarySkuNode) {
-            summarySkuNode.textContent = sku;
+	        productSummaryText.textContent = sentenceParts.join(' ');
+
+	        if (summarySkuNode) {
+	            summarySkuNode.textContent = sku;
         }
-        if (summaryBaseUnitNode) {
-            summaryBaseUnitNode.textContent = baseUnit || '-';
-        }
+	        if (summaryBaseUnitNode) {
+	            summaryBaseUnitNode.textContent = baseUnitDisplay || '-';
+	        }
         if (summaryMinStockNode) {
             summaryMinStockNode.textContent = formatDisplay(minStock, 2);
         }
@@ -1780,7 +1798,6 @@ $stockAlertCount = count($stockAlerts);
     };
 
     const recalcProductValues = () => {
-        syncPresentationAndBaseUnit();
         const quantity = parseNumber(productStockQuantityInput?.value || '0');
         const factor = parseNumber(productPackagingFactorInput?.value || '0');
         const lotPurchasePrice = parseNumber(productLotPurchaseInput?.value || '0');
@@ -1959,29 +1976,10 @@ $stockAlertCount = count($stockAlerts);
 
     const syncSmartIdentityFromName = () => {
         const name = String(productNameInput?.value || '');
-        let currentForme = String(productFormeInput?.value || '').trim();
         if (!dosageManuallyEdited && productDosageInput && String(productDosageInput.value || '').trim() === '') {
             const dosage = inferDosageFromName(name);
             if (dosage !== '') {
                 setInputValue(productDosageInput, dosage);
-            }
-        }
-        if (!formeManuallyEdited && productFormeInput && String(productFormeInput.value || '').trim() === '') {
-            const forme = inferFormeFromName(name);
-            if (forme !== '') {
-                setInputValue(productFormeInput, forme);
-                currentForme = forme;
-            }
-        }
-
-        if (productBaseUnitSelect && !baseUnitManuallyEdited && !isEditingProduct) {
-            const isOtherChoice = String(productPresentationChoiceSelect?.value || '').toLowerCase() === 'autre';
-            const otherDetail = String(productPresentationOtherInput?.value || '').trim();
-            if (isOtherChoice && otherDetail === '') {
-                const suggestedUnit = suggestBaseUnitFromForme(currentForme);
-                if (suggestedUnit !== '') {
-                    setInputValue(productBaseUnitSelect, suggestedUnit);
-                }
             }
         }
     };
@@ -2182,24 +2180,9 @@ $stockAlertCount = count($stockAlerts);
                 recalcProductValues();
             });
         }
-        if (productPresentationChoiceSelect) {
-            productPresentationChoiceSelect.addEventListener('change', () => {
-                presentationManuallyEdited = true;
-                syncPresentationAndBaseUnit();
-                recalcProductValues();
-            });
-        }
-        if (productPresentationOtherInput) {
-            productPresentationOtherInput.addEventListener('input', () => {
-                presentationManuallyEdited = true;
-                syncPresentationAndBaseUnit();
-                recalcProductValues();
-            });
-            productPresentationOtherInput.addEventListener('change', () => {
-                presentationManuallyEdited = true;
-                syncPresentationAndBaseUnit();
-                recalcProductValues();
-            });
+        if (productPresentationInput) {
+            productPresentationInput.addEventListener('input', recalcProductValues);
+            productPresentationInput.addEventListener('change', recalcProductValues);
         }
         if (productBaseUnitSelect) {
             productBaseUnitSelect.addEventListener('input', () => {
@@ -2244,7 +2227,6 @@ $stockAlertCount = count($stockAlerts);
             productExpirationInput.addEventListener('change', refreshLiveValidation);
         }
         stockProductForm.addEventListener('submit', (event) => {
-            syncPresentationAndBaseUnit();
             const liveState = refreshLiveValidation();
             if (liveState.duplicate) {
                 event.preventDefault();
@@ -2263,17 +2245,35 @@ $stockAlertCount = count($stockAlerts);
             const purchaseLot = parseNumber(productLotPurchaseInput?.value || '0');
             const purchaseUnit = parseNumber(productPurchaseUnitBaseInput?.value || '0');
             const lotCode = String(productInitialLotInput?.value || '').trim();
-            const presentationChoice = String(productPresentationChoiceSelect?.value || '').toLowerCase();
-            const presentationOther = String(productPresentationOtherInput?.value || '').trim();
 
             if (name === '') {
                 event.preventDefault();
                 window.alert('Le nom du produit est obligatoire.');
                 return;
             }
-            if (presentationChoice === 'autre' && presentationOther === '') {
+            if (productBaseUnitSelect && String(productBaseUnitSelect.value || '').trim() === '') {
                 event.preventDefault();
-                window.alert('Detaillez la categorie si vous choisissez "Autre".');
+                window.alert('L unite de base est obligatoire.');
+                return;
+            }
+            if (productPresentationInput && productPresentationInput.required && String(productPresentationInput.value || '').trim() === '') {
+                event.preventDefault();
+                window.alert('La presentation est obligatoire.');
+                return;
+            }
+            if (productSupplierInput && productSupplierInput.required && String(productSupplierInput.value || '').trim() === '') {
+                event.preventDefault();
+                window.alert('Le fournisseur est obligatoire.');
+                return;
+            }
+            if (productDosageInput && productDosageInput.required && String(productDosageInput.value || '').trim() === '') {
+                event.preventDefault();
+                window.alert('La specification est obligatoire.');
+                return;
+            }
+            if (productFormeInput && productFormeInput.required && String(productFormeInput.value || '').trim() === '') {
+                event.preventDefault();
+                window.alert('La forme est obligatoire.');
                 return;
             }
             if (!isEditingProduct && qty <= 0) {
@@ -2347,10 +2347,10 @@ $stockAlertCount = count($stockAlerts);
         });
     }
 
-    const openProductModal = (productId) => {
-        if (!productModal || !productModalBody) {
-            return;
-        }
+	    const openProductModal = (productId) => {
+	        if (!productModal || !productModalBody) {
+	            return;
+	        }
 
         const data = productDetailsMap[String(productId)] || null;
         if (!data) {
@@ -2403,46 +2403,59 @@ $stockAlertCount = count($stockAlerts);
             ? `<span style="display:inline-block;width:16px;height:16px;border-radius:999px;background:${escapeHtml(color)};border:1px solid var(--border-light);vertical-align:middle;"></span> <span>${escapeHtml(color)}</span>`
             : '<span class="text-secondary">-</span>';
 
-        const packagingLabel = String(data.packaging_unit || '').trim() !== ''
-            ? `${escapeHtml(data.packaging_unit)} (x${formatDisplay(data.packaging_factor || 0, 3)})`
-            : '-';
+	        const packagingLabel = String(data.packaging_unit || '').trim() !== ''
+	            ? `${escapeHtml(data.packaging_unit)} (x${formatDisplay(data.packaging_factor || 0, 3)})`
+	            : '-';
 
-        productModalBody.innerHTML = `
-            <div class="stock-modal-grid">
-                <div class="stock-modal-kpi"><div class="label">Produit</div><div class="value">${escapeHtml(data.name || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">SKU</div><div class="value">${escapeHtml(data.sku || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Marque</div><div class="value">${escapeHtml(data.brand || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Fournisseur</div><div class="value">${escapeHtml(data.supplier || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Dosage</div><div class="value">${escapeHtml(data.dosage || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Forme</div><div class="value">${escapeHtml(data.forme || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Presentation</div><div class="value">${escapeHtml(data.presentation || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Couleur</div><div class="value">${colorHtml}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Unite base</div><div class="value">${escapeHtml(data.base_unit || '-')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Conditionnement</div><div class="value">${packagingLabel}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Stock actuel</div><div class="value">${formatDisplay(data.quantity || 0, 2)} ${escapeHtml(data.base_unit || '')}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Seuil mini</div><div class="value">${formatDisplay(data.min_stock || 0, 2)}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Prix achat / vente</div><div class="value">$${formatDisplay(data.purchase_price || 0, 2)} / $${formatDisplay(data.sale_price || 0, 2)}</div></div>
-                <div class="stock-modal-kpi"><div class="label">Expiration produit</div><div class="value">${escapeHtml(String(data.expiration_date || '').trim() || '-')}</div></div>
-            </div>
-            <h4 style="margin:0 0 8px 0;">Lots du produit (FEFO: expiration la plus proche en premier)</h4>
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>N° lot</th>
-                        <th>Fournisseur</th>
-                        <th>Source</th>
-                        <th>Qté initiale</th>
-                        <th>Qté restante</th>
-                        <th>Cout unitaire base</th>
-                        <th>Expiration</th>
-                        <th>Statut</th>
-                        <th>Date ouverture</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>${lotsRows}</tbody>
-            </table>
-        `;
+	        const supplierKpi = productFormFields?.supplier?.enabled
+	            ? `<div class="stock-modal-kpi"><div class="label">${escapeHtml(productFormFields?.supplier?.label || 'Fournisseur')}</div><div class="value">${escapeHtml(data.supplier || '-')}</div></div>`
+	            : '';
+	        const dosageKpi = productFormFields?.dosage?.enabled
+	            ? `<div class="stock-modal-kpi"><div class="label">${escapeHtml(productFormFields?.dosage?.label || 'Spécification')}</div><div class="value">${escapeHtml(data.dosage || '-')}</div></div>`
+	            : '';
+	        const formeKpi = productFormFields?.forme?.enabled
+	            ? `<div class="stock-modal-kpi"><div class="label">${escapeHtml(productFormFields?.forme?.label || 'Forme')}</div><div class="value">${escapeHtml(data.forme || '-')}</div></div>`
+	            : '';
+	        const presentationKpi = productFormFields?.presentation?.enabled
+	            ? `<div class="stock-modal-kpi"><div class="label">${escapeHtml(productFormFields?.presentation?.label || 'Présentation')}</div><div class="value">${escapeHtml(data.presentation || '-')}</div></div>`
+	            : '';
+
+	        productModalBody.innerHTML = `
+	            <div class="stock-modal-grid">
+	                <div class="stock-modal-kpi"><div class="label">Produit</div><div class="value">${escapeHtml(data.name || '-')}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">SKU</div><div class="value">${escapeHtml(data.sku || '-')}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">Marque</div><div class="value">${escapeHtml(data.brand || '-')}</div></div>
+	                ${supplierKpi}
+	                ${dosageKpi}
+	                ${formeKpi}
+	                ${presentationKpi}
+	                <div class="stock-modal-kpi"><div class="label">Couleur</div><div class="value">${colorHtml}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">Unite base</div><div class="value">${escapeHtml(data.base_unit || '-')}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">Conditionnement</div><div class="value">${packagingLabel}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">Stock actuel</div><div class="value">${formatDisplay(data.quantity || 0, 2)} ${escapeHtml(data.base_unit || '')}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">Seuil mini</div><div class="value">${formatDisplay(data.min_stock || 0, 2)}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">Prix achat / vente</div><div class="value">$${formatDisplay(data.purchase_price || 0, 2)} / $${formatDisplay(data.sale_price || 0, 2)}</div></div>
+	                <div class="stock-modal-kpi"><div class="label">Expiration produit</div><div class="value">${escapeHtml(String(data.expiration_date || '').trim() || '-')}</div></div>
+	            </div>
+	            <h4 style="margin:0 0 8px 0;">Lots du produit (FEFO: expiration la plus proche en premier)</h4>
+	            <table class="table">
+	                <thead>
+	                    <tr>
+	                        <th>N° lot</th>
+	                        <th>Fournisseur</th>
+	                        <th>Source</th>
+	                        <th>Qté initiale</th>
+	                        <th>Qté restante</th>
+	                        <th>Cout unitaire base</th>
+	                        <th>Expiration</th>
+	                        <th>Statut</th>
+	                        <th>Date ouverture</th>
+	                        <th>Action</th>
+	                    </tr>
+	                </thead>
+	                <tbody>${lotsRows}</tbody>
+	            </table>
+	        `;
 
         productModal.classList.add('open');
         productModal.setAttribute('aria-hidden', 'false');
