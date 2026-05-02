@@ -74,7 +74,7 @@ class TransactionsController extends Controller
             $editingTransaction = $this->transactionModel->findByIdForCompany($companyId, $editId);
         }
         $editingBlocked = false;
-        if (is_array($editingTransaction) && (string) ($editingTransaction['type'] ?? '') === 'debt_payment') {
+        if (is_array($editingTransaction) && in_array((string) ($editingTransaction['type'] ?? ''), ['debt_payment', 'transfer', 'journal'], true)) {
             $editingTransaction = null;
             $editingBlocked = true;
         }

@@ -95,22 +95,23 @@ class Dashboard extends Model
         $prevEnd = $periodStart->modify('-1 day');
         $prevStart = $prevEnd->modify('-' . ($days - 1) . ' days');
 
-        $cashRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(
-                CASE
-                    WHEN paid_amount > 0 THEN paid_amount
-                    WHEN status = :paid_status THEN total
-                    ELSE 0
-                END
-            ), 0) AS total_paid
-             FROM invoices
-             WHERE company_id = :company_id
-               AND status IN (:sent_status, :paid_status, :overdue_status)
-               AND COALESCE(paid_date, invoice_date) BETWEEN :from_date AND :to_date
-               AND NOT EXISTS (
-                    SELECT 1 FROM invoice_payment_allocations a
-                    WHERE a.invoice_id = invoices.id
-               )',
+	        $cashRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(
+	                CASE
+	                    WHEN paid_amount > 0 THEN paid_amount
+	                    WHEN status = :paid_status THEN total
+	                    ELSE 0
+	                END
+	            ), 0) AS total_paid
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND status IN (:sent_status, :paid_status, :overdue_status)
+	               AND COALESCE(paid_date, invoice_date) BETWEEN :from_date AND :to_date
+	               AND NOT EXISTS (
+	                    SELECT 1 FROM invoice_payment_allocations a
+	                    WHERE a.invoice_id = invoices.id
+	               )',
             [
                 'company_id' => $companyId,
                 'sent_status' => 'sent',
@@ -141,19 +142,19 @@ class Dashboard extends Model
             ]
         );
 
-        $monthRevenueRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(total), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND status IN (:draft_status, :sent_status, :paid_status, :overdue_status)
-               AND invoice_date BETWEEN :from_date AND :to_date',
-            [
-                'company_id' => $companyId,
-                'draft_status' => 'draft',
-                'sent_status' => 'sent',
-                'paid_status' => 'paid',
-                'overdue_status' => 'overdue',
-                'from_date' => $fromDate,
+	        $monthRevenueRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(total), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND status IN (:sent_status, :paid_status, :overdue_status)
+	               AND invoice_date BETWEEN :from_date AND :to_date',
+	            [
+	                'company_id' => $companyId,
+	                'sent_status' => 'sent',
+	                'paid_status' => 'paid',
+	                'overdue_status' => 'overdue',
+	                'from_date' => $fromDate,
                 'to_date' => $toDate,
             ]
         );
@@ -175,19 +176,19 @@ class Dashboard extends Model
             ]
         );
 
-        $prevRevenueRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(total), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND status IN (:draft_status, :sent_status, :paid_status, :overdue_status)
-               AND invoice_date BETWEEN :from_date AND :to_date',
-            [
-                'company_id' => $companyId,
-                'draft_status' => 'draft',
-                'sent_status' => 'sent',
-                'paid_status' => 'paid',
-                'overdue_status' => 'overdue',
-                'from_date' => $prevStart->format('Y-m-d'),
+	        $prevRevenueRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(total), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND status IN (:sent_status, :paid_status, :overdue_status)
+	               AND invoice_date BETWEEN :from_date AND :to_date',
+	            [
+	                'company_id' => $companyId,
+	                'sent_status' => 'sent',
+	                'paid_status' => 'paid',
+	                'overdue_status' => 'overdue',
+	                'from_date' => $prevStart->format('Y-m-d'),
                 'to_date' => $prevEnd->format('Y-m-d'),
             ]
         );
@@ -243,14 +244,15 @@ class Dashboard extends Model
             ]
         );
 
-        $vatDueRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(tax_amount), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND invoice_date BETWEEN :from_date AND :to_date
-               AND status IN (:sent_status, :paid_status, :overdue_status)',
-            [
-                'company_id' => $companyId,
+	        $vatDueRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(tax_amount), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND invoice_date BETWEEN :from_date AND :to_date
+	               AND status IN (:sent_status, :paid_status, :overdue_status)',
+	            [
+	                'company_id' => $companyId,
                 'from_date' => $fromDate,
                 'to_date' => $toDate,
                 'sent_status' => 'sent',
@@ -289,108 +291,109 @@ class Dashboard extends Model
         $vatPaid = (float) ($vatPaidRow['amount'] ?? 0);
         $vatDue = max($vatFromInvoices - $vatPaid, 0);
 
-        $periodDebtRow = $this->db->fetchOne(
-            'SELECT COALESCE(COUNT(*), 0) AS count, COALESCE(SUM(total - paid_amount), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND invoice_date BETWEEN :from_date AND :to_date
-               AND total > paid_amount
-               AND status IN (:draft_status, :sent_status, :paid_status, :overdue_status)',
-            [
-                'company_id' => $companyId,
-                'from_date' => $fromDate,
-                'to_date' => $toDate,
-                'draft_status' => 'draft',
-                'sent_status' => 'sent',
-                'paid_status' => 'paid',
-                'overdue_status' => 'overdue',
-            ]
+	        $periodDebtRow = $this->db->fetchOne(
+	            'SELECT COALESCE(COUNT(*), 0) AS count, COALESCE(SUM(total - paid_amount), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND invoice_date BETWEEN :from_date AND :to_date
+	               AND total > paid_amount
+	               AND status IN (:sent_status, :paid_status, :overdue_status)',
+	            [
+	                'company_id' => $companyId,
+	                'from_date' => $fromDate,
+	                'to_date' => $toDate,
+	                'sent_status' => 'sent',
+	                'paid_status' => 'paid',
+	                'overdue_status' => 'overdue',
+	            ]
         );
 
         $periodSalesWithDebtCount = (int) ($periodDebtRow['count'] ?? 0);
         $periodDebtAmount = (float) ($periodDebtRow['amount'] ?? 0);
 
         $today = date('Y-m-d');
-        $dailyPaidRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(paid_amount), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND paid_date = :today
-               AND status IN (:paid_status, :overdue_status)',
-            [
-                'company_id' => $companyId,
+	        $dailyPaidRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(paid_amount), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND paid_date = :today
+	               AND status IN (:paid_status, :overdue_status)',
+	            [
+	                'company_id' => $companyId,
                 'today' => $today,
                 'paid_status' => 'paid',
                 'overdue_status' => 'overdue',
             ]
         );
 
-        $dailyTotalRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(total), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND invoice_date = :today
-               AND status IN (:draft_status, :sent_status, :paid_status, :overdue_status)',
-            [
-                'company_id' => $companyId,
-                'today' => $today,
-                'draft_status' => 'draft',
-                'sent_status' => 'sent',
-                'paid_status' => 'paid',
-                'overdue_status' => 'overdue',
-            ]
-        );
+	        $dailyTotalRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(total), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND invoice_date = :today
+	               AND status IN (:sent_status, :paid_status, :overdue_status)',
+	            [
+	                'company_id' => $companyId,
+	                'today' => $today,
+	                'sent_status' => 'sent',
+	                'paid_status' => 'paid',
+	                'overdue_status' => 'overdue',
+	            ]
+	        );
 
-        $dailyDebtSalesRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(total), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND invoice_date = :today
-               AND total > paid_amount
-               AND status IN (:draft_status, :sent_status, :paid_status, :overdue_status)',
-            [
-                'company_id' => $companyId,
-                'today' => $today,
-                'draft_status' => 'draft',
-                'sent_status' => 'sent',
-                'paid_status' => 'paid',
-                'overdue_status' => 'overdue',
-            ]
-        );
+	        $dailyDebtSalesRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(total), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND invoice_date = :today
+	               AND total > paid_amount
+	               AND status IN (:sent_status, :paid_status, :overdue_status)',
+	            [
+	                'company_id' => $companyId,
+	                'today' => $today,
+	                'sent_status' => 'sent',
+	                'paid_status' => 'paid',
+	                'overdue_status' => 'overdue',
+	            ]
+	        );
 
-        $dailyDebtInvoiceCountRow = $this->db->fetchOne(
-            'SELECT COALESCE(COUNT(*), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND invoice_date = :today
-               AND total > paid_amount
-               AND status IN (:draft_status, :sent_status, :paid_status, :overdue_status)',
-            [
-                'company_id' => $companyId,
-                'today' => $today,
-                'draft_status' => 'draft',
-                'sent_status' => 'sent',
-                'paid_status' => 'paid',
-                'overdue_status' => 'overdue',
-            ]
-        );
+	        $dailyDebtInvoiceCountRow = $this->db->fetchOne(
+	            'SELECT COALESCE(COUNT(*), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND invoice_date = :today
+	               AND total > paid_amount
+	               AND status IN (:sent_status, :paid_status, :overdue_status)',
+	            [
+	                'company_id' => $companyId,
+	                'today' => $today,
+	                'sent_status' => 'sent',
+	                'paid_status' => 'paid',
+	                'overdue_status' => 'overdue',
+	            ]
+	        );
 
-        $dailyDebtAmountRow = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(total - paid_amount), 0) AS amount
-             FROM invoices
-             WHERE company_id = :company_id
-               AND invoice_date = :today
-               AND total > paid_amount
-               AND status IN (:draft_status, :sent_status, :paid_status, :overdue_status)',
-            [
-                'company_id' => $companyId,
-                'today' => $today,
-                'draft_status' => 'draft',
-                'sent_status' => 'sent',
-                'paid_status' => 'paid',
-                'overdue_status' => 'overdue',
-            ]
-        );
+	        $dailyDebtAmountRow = $this->db->fetchOne(
+	            'SELECT COALESCE(SUM(total - paid_amount), 0) AS amount
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND COALESCE(document_type, \'invoice\') = \'invoice\'
+	               AND invoice_date = :today
+	               AND total > paid_amount
+	               AND status IN (:sent_status, :paid_status, :overdue_status)',
+	            [
+	                'company_id' => $companyId,
+	                'today' => $today,
+	                'sent_status' => 'sent',
+	                'paid_status' => 'paid',
+	                'overdue_status' => 'overdue',
+	            ]
+	        );
 
         $dailySalesTotal = (float) ($dailyTotalRow['amount'] ?? 0);
         $dailyDebtAmount = (float) ($dailyDebtAmountRow['amount'] ?? 0);
@@ -478,26 +481,27 @@ class Dashboard extends Model
             ? "'Encaissement facture ' || i.invoice_number || ' - ' || COALESCE(i.customer_name, 'Client')"
             : "CONCAT('Encaissement facture ', i.invoice_number, ' - ', COALESCE(i.customer_name, 'Client'))";
 
-        $ledgerSql = "
-            SELECT
-                i.id AS sort_id,
-                COALESCE(i.paid_date, i.invoice_date) AS movement_date,
-                'invoice' AS source,
-                $invoiceDescriptionExpr AS label,
-                CASE
-                    WHEN i.paid_amount > 0 THEN i.paid_amount
-                    WHEN i.status = :paid_status THEN i.total
-                    ELSE 0
-                END AS amount
-            FROM invoices i
-            WHERE i.company_id = :company_id
-              AND i.status IN (:sent_status, :paid_status, :overdue_status)
-              AND COALESCE(i.paid_date, i.invoice_date) BETWEEN :from_date AND :to_date
-              AND (i.paid_amount > 0 OR i.status = :paid_status)
-              AND NOT EXISTS (
-                    SELECT 1 FROM invoice_payment_allocations a
-                    WHERE a.invoice_id = i.id
-              )
+	        $ledgerSql = "
+	            SELECT
+	                i.id AS sort_id,
+	                COALESCE(i.paid_date, i.invoice_date) AS movement_date,
+	                'invoice' AS source,
+	                $invoiceDescriptionExpr AS label,
+	                CASE
+	                    WHEN i.paid_amount > 0 THEN i.paid_amount
+	                    WHEN i.status = :paid_status THEN i.total
+	                    ELSE 0
+	                END AS amount
+	            FROM invoices i
+	            WHERE i.company_id = :company_id
+	              AND COALESCE(i.document_type, 'invoice') = 'invoice'
+	              AND i.status IN (:sent_status, :paid_status, :overdue_status)
+	              AND COALESCE(i.paid_date, i.invoice_date) BETWEEN :from_date AND :to_date
+	              AND (i.paid_amount > 0 OR i.status = :paid_status)
+	              AND NOT EXISTS (
+	                    SELECT 1 FROM invoice_payment_allocations a
+	                    WHERE a.invoice_id = i.id
+	              )
 
             UNION ALL
 
@@ -737,24 +741,25 @@ class Dashboard extends Model
             ]
         );
 
-        $invoiceRows = $this->db->fetchAll(
-            'SELECT COALESCE(i.paid_date, i.invoice_date) AS movement_date,
-                    COALESCE(SUM(
-                        CASE
-                            WHEN i.paid_amount > 0 THEN i.paid_amount
-                            WHEN i.status = :paid_status THEN i.total
-                            ELSE 0
-                        END
-                    ), 0) AS cash_total
-             FROM invoices i
-             WHERE i.company_id = :company_id
-               AND i.status IN (:sent_status, :paid_status, :overdue_status)
-               AND COALESCE(i.paid_date, i.invoice_date) BETWEEN :start_date AND :end_date
-               AND (COALESCE(i.paid_amount, 0) > 0 OR i.status = :paid_status)
-               AND NOT EXISTS (
-                    SELECT 1 FROM invoice_payment_allocations a
-                    WHERE a.invoice_id = i.id
-               )
+	        $invoiceRows = $this->db->fetchAll(
+	            'SELECT COALESCE(i.paid_date, i.invoice_date) AS movement_date,
+	                    COALESCE(SUM(
+	                        CASE
+	                            WHEN i.paid_amount > 0 THEN i.paid_amount
+	                            WHEN i.status = :paid_status THEN i.total
+	                            ELSE 0
+	                        END
+	                    ), 0) AS cash_total
+	             FROM invoices i
+	             WHERE i.company_id = :company_id
+	               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
+	               AND i.status IN (:sent_status, :paid_status, :overdue_status)
+	               AND COALESCE(i.paid_date, i.invoice_date) BETWEEN :start_date AND :end_date
+	               AND (COALESCE(i.paid_amount, 0) > 0 OR i.status = :paid_status)
+	               AND NOT EXISTS (
+	                    SELECT 1 FROM invoice_payment_allocations a
+	                    WHERE a.invoice_id = i.id
+	               )
              GROUP BY movement_date',
             [
                 'company_id' => $companyId,

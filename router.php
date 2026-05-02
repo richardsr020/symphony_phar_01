@@ -93,6 +93,8 @@ class Router {
         $this->addRoute('GET', '/stock/lots/export', 'StockController@exportLots', ['auth']);
         $this->addRoute('POST', '/stock/delete-bulk', 'StockController@deleteBulk', ['auth']);
         $this->addRoute('POST', '/stock/lots/delete-bulk', 'StockController@deleteLotsBulk', ['auth']);
+        $this->addRoute('POST', '/stock/purchase-orders/generate-critical', 'StockController@generateCriticalPurchaseOrder', ['auth']);
+        $this->addRoute('GET', '/stock/purchase-orders/preview/{id}', 'StockController@previewPurchaseOrder', ['auth']);
 
         // Debug temporaire (a supprimer apres usage)
         $this->addRoute('GET', '/debug/product', 'DebugController@product', ['auth']);

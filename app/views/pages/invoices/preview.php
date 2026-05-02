@@ -5,9 +5,15 @@ $items = $invoice['items'] ?? [];
 $invoiceId = (int) ($invoice['id'] ?? 0);
 $autoPrint = (bool) ($autoPrint ?? false);
 $autoDownload = (bool) ($autoDownload ?? false);
+$documentType = strtolower(trim((string) ($invoice['document_type'] ?? 'invoice')));
+$isProformaDocument = $documentType === 'proforma';
 $paid = (float) ($invoice['paid_amount'] ?? 0);
 $total = (float) ($invoice['total'] ?? 0);
 $remaining = max($total - $paid, 0);
+$laborAmount = round((float) ($invoice['labor_amount'] ?? 0), 2);
+$laborTaxRate = round((float) ($invoice['labor_tax_rate'] ?? 0), 2);
+$laborTaxAmount = round((float) ($invoice['labor_tax_amount'] ?? ($laborAmount * ($laborTaxRate / 100))), 2);
+$laborTotal = round($laborAmount + $laborTaxAmount, 2);
 $issuerName = (string) ($invoice['issuer_company_name'] ?? ($company['name'] ?? 'Entreprise'));
 $issuerLogo = (string) ($invoice['issuer_logo_url'] ?? ($company['invoice_logo_url'] ?? ''));
 $issuerBrandColor = (string) ($invoice['issuer_brand_color'] ?? ($company['invoice_brand_color'] ?? '#0F172A'));
@@ -28,6 +34,23 @@ if (!empty($invoice['created_at'])) {
     }
 }
 $downloadUrl = $invoiceId > 0 ? '/invoices/pdf/' . $invoiceId : '';
+$hexToRgb = static function (string $hex): ?array {
+    $hex = ltrim(trim($hex), '#');
+    if (strlen($hex) === 3) {
+        $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+    }
+    if (!preg_match('/^[0-9a-f]{6}$/i', $hex)) {
+        return null;
+    }
+    return [
+        hexdec(substr($hex, 0, 2)),
+        hexdec(substr($hex, 2, 2)),
+        hexdec(substr($hex, 4, 2)),
+    ];
+};
+$accentRgb = $hexToRgb($issuerBrandColor);
+$otherLineBg = $accentRgb ? sprintf('rgba(%d, %d, %d, 0.10)', $accentRgb[0], $accentRgb[1], $accentRgb[2]) : 'rgba(37, 99, 235, 0.10)';
+$otherLineBorder = $issuerBrandColor !== '' ? $issuerBrandColor : '#2563eb';
 ?>
 
 <div class="invoice-preview-page">
@@ -44,7 +67,7 @@ $downloadUrl = $invoiceId > 0 ? '/invoices/pdf/' . $invoiceId : '';
     <section class="a4-sheet">
         <header class="sheet-header">
             <div>
-                <h1>FACTURE</h1>
+                <h1><?= $isProformaDocument ? 'PROFORMA' : 'FACTURE' ?></h1>
                 <p class="muted">N° <?= htmlspecialchars((string) ($invoice['invoice_number'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
             </div>
             <div class="meta-right">
@@ -67,12 +90,16 @@ $downloadUrl = $invoiceId > 0 ? '/invoices/pdf/' . $invoiceId : '';
             </div>
         </section>
 
-        <?php if (!$isAnonymousClient): ?>
-        <section class="client-card">
-            <h3>Client</h3>
-            <p><?= htmlspecialchars((string) ($invoice['customer_name'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
-            <p class="muted"><?= nl2br(htmlspecialchars((string) ($invoice['customer_address'] ?? ''), ENT_QUOTES, 'UTF-8')) ?></p>
-            <p class="muted">NIF/RCCM: <?= htmlspecialchars((string) (($invoice['customer_tax_id'] ?? '') !== '' ? $invoice['customer_tax_id'] : '-'), ENT_QUOTES, 'UTF-8') ?></p>
+	        <?php if (!$isAnonymousClient): ?>
+	        <section class="client-card">
+	            <h3>Client</h3>
+	            <p><?= htmlspecialchars((string) ($invoice['customer_name'] ?? '-'), ENT_QUOTES, 'UTF-8') ?></p>
+	            <?php $customerDescription = trim((string) ($invoice['customer_description'] ?? '')); ?>
+	            <?php if ($customerDescription !== ''): ?>
+	            <p class="muted"><strong>Description:</strong> <?= nl2br(htmlspecialchars($customerDescription, ENT_QUOTES, 'UTF-8')) ?></p>
+	            <?php endif; ?>
+	            <p class="muted"><?= nl2br(htmlspecialchars((string) ($invoice['customer_address'] ?? ''), ENT_QUOTES, 'UTF-8')) ?></p>
+	            <p class="muted">NIF/RCCM: <?= htmlspecialchars((string) (($invoice['customer_tax_id'] ?? '') !== '' ? $invoice['customer_tax_id'] : '-'), ENT_QUOTES, 'UTF-8') ?></p>
         </section>
         <?php endif; ?>
 
@@ -92,15 +119,30 @@ $downloadUrl = $invoiceId > 0 ? '/invoices/pdf/' . $invoiceId : '';
                     <td colspan="5" class="muted">Aucune ligne de facturation.</td>
                 </tr>
                 <?php endif; ?>
-                <?php foreach ($items as $item): ?>
+		                <?php foreach ($items as $item): ?>
+		                <?php $isOtherLine = strtolower(trim((string) ($item['line_kind'] ?? 'standard'))) === 'other'; ?>
+		                <tr<?= $isOtherLine ? ' class="line-kind-other" style="background:' . htmlspecialchars($otherLineBg, ENT_QUOTES, 'UTF-8') . '; border-left: 4px solid ' . htmlspecialchars($otherLineBorder, ENT_QUOTES, 'UTF-8') . ';"' : '' ?>>
+		                    <?php if ($isOtherLine): ?>
+		                    <td colspan="4"><?= htmlspecialchars((string) ($item['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+		                    <td>$<?= number_format((float) ($item['total'] ?? 0), 2) ?></td>
+		                    <?php else: ?>
+		                    <td><?= htmlspecialchars((string) ($item['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+		                    <td><?= number_format((float) ($item['quantity'] ?? 0), 2) ?></td>
+		                    <td>$<?= number_format((float) ($item['unit_price'] ?? 0), 2) ?></td>
+		                    <td><?= number_format((float) ($item['tax_rate'] ?? 0), 2) ?>%</td>
+		                    <td>$<?= number_format((float) ($item['total'] ?? 0), 2) ?></td>
+		                    <?php endif; ?>
+		                </tr>
+		                <?php endforeach; ?>
+                <?php if ($laborAmount > 0.009): ?>
                 <tr>
-                    <td><?= htmlspecialchars((string) ($item['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
-                    <td><?= number_format((float) ($item['quantity'] ?? 0), 2) ?></td>
-                    <td>$<?= number_format((float) ($item['unit_price'] ?? 0), 2) ?></td>
-                    <td><?= number_format((float) ($item['tax_rate'] ?? 0), 2) ?>%</td>
-                    <td>$<?= number_format((float) ($item['total'] ?? 0), 2) ?></td>
+                    <td>Main d'oeuvre</td>
+                    <td><?= number_format(1, 2) ?></td>
+                    <td>$<?= number_format($laborAmount, 2) ?></td>
+                    <td><?= number_format($laborTaxRate, 2) ?>%</td>
+                    <td>$<?= number_format($laborTotal, 2) ?></td>
                 </tr>
-                <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
 
@@ -193,6 +235,7 @@ window.addEventListener('load', () => {
 (() => {
     const invoiceId = <?= (int) $invoiceId ?>;
     const invoiceNumber = <?= json_encode((string) ($invoice['invoice_number'] ?? 'facture'), JSON_UNESCAPED_UNICODE) ?>;
+    const documentType = <?= json_encode($isProformaDocument ? 'proforma' : 'invoice', JSON_UNESCAPED_UNICODE) ?>;
     const autoDownload = <?= $autoDownload ? 'true' : 'false' ?>;
     const downloadUrl = <?= json_encode($downloadUrl, JSON_UNESCAPED_UNICODE) ?>;
     const downloadBtn = document.getElementById('download-pdf-btn');
@@ -233,7 +276,8 @@ window.addEventListener('load', () => {
             .replace(/[^a-z0-9_-]+/gi, '-')
             .replace(/-+/g, '-')
             .replace(/^-|-$/g, '');
-        return `facture-${normalized || 'document'}.pdf`;
+        const prefix = documentType === 'proforma' ? 'proforma' : 'facture';
+        return `${prefix}-${normalized || 'document'}.pdf`;
     };
 
     const triggerDownload = async (allowRouteFallback = false) => {

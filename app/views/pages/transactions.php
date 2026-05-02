@@ -92,20 +92,20 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
 ?>
 
 <div class="transactions-page">
-    <div class="page-header">
-        <div>
-            <h1 class="page-title">Transactions</h1>
-            <p class="page-subtitle">Gerez toutes vos ecritures comptables</p>
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <button class="btn btn-soft" onclick="window.location.href='<?= htmlspecialchars($exportUrl, ENT_QUOTES, 'UTF-8') ?>'">
-                Exporter Excel
-            </button>
-            <button class="btn btn-add" onclick="window.location.href='/transactions?mode=create'">
-                <span>+</span> Nouvelle transaction
-            </button>
-        </div>
-    </div>
+	    <div class="page-header">
+	        <div>
+	            <h1 class="page-title">Transactions</h1>
+	            <p class="page-subtitle">Gerez toutes vos ecritures comptables</p>
+	        </div>
+	        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+	            <button class="btn btn-soft" onclick="window.location.href='<?= htmlspecialchars($exportUrl, ENT_QUOTES, 'UTF-8') ?>'">
+	                Exporter Excel
+	            </button>
+	            <button type="button" class="btn btn-add" id="open-transaction-create-modal">
+	                <span>+</span> Nouvelle transaction
+	            </button>
+	        </div>
+	    </div>
 
     <?php if ($flashSuccess !== ''): ?>
     <div class="flash-message flash-success"><?= htmlspecialchars($flashSuccess, ENT_QUOTES, 'UTF-8') ?></div>
@@ -115,106 +115,99 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
     <div class="flash-message flash-error"><?= htmlspecialchars($flashError, ENT_QUOTES, 'UTF-8') ?></div>
     <?php endif; ?>
 
-    <?php if ($showCreateForm): ?>
-    <div class="card" style="margin-bottom: 20px;">
-        <h3 style="margin-bottom: 16px;">Nouvelle transaction</h3>
-        <form method="POST" action="/transactions/store" class="transaction-create-form" data-async="true" data-async-success="Transaction enregistree." novalidate>
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+	    <div class="transaction-modal-overlay" id="transaction-create-modal" aria-hidden="true">
+	        <div class="transaction-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="transaction-create-title">
+	            <div class="transaction-modal-head">
+	                <h3 id="transaction-create-title" style="margin:0;">Nouvelle transaction</h3>
+	                <button type="button" class="btn-icon" id="transaction-create-close" aria-label="Fermer">
+	                    <i class="fa-solid fa-xmark"></i>
+	                </button>
+	            </div>
+	            <div class="transaction-modal-body">
+	                <form method="POST" action="/transactions/store" class="transaction-create-form" data-async="true" data-async-success="Transaction enregistree." novalidate>
+	                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
 
-            <div class="filters-grid">
-                <div class="filter-group">
-                    <label>Date</label>
-                    <input type="date" class="filter-input" name="transaction_date" value="<?= htmlspecialchars(date('Y-m-d'), ENT_QUOTES, 'UTF-8') ?>" required>
-                </div>
-                <div class="filter-group">
-                    <label>Type</label>
-                    <select class="filter-select js-transaction-type" name="type" required>
-                        <option value="income">Revenu occasionnel</option>
-                        <option value="expense">Depense</option>
-                        <option value="transfer">Transfert</option>
-                        <option value="journal">Journal</option>
-                        <option value="debt_payment">Remboursement de dettes</option>
-                    </select>
-                </div>
-                <div class="filter-group js-expense-subcategory-group" style="display:none;">
-                    <label>Sous-categorie depense</label>
-                    <select class="filter-select js-expense-subcategory" name="expense_subcategory">
-                        <option value="">Selectionnez une sous-categorie</option>
-                        <?php foreach ($expenseSubcategoryLabels as $value => $label): ?>
-                        <option value="<?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8') ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-group js-expense-fiscal-group" style="display:none;">
-                    <label>Detail fiscal</label>
-                    <select class="filter-select js-expense-fiscal-subcategory" name="expense_fiscal_subcategory">
-                        <option value="">Selectionnez un detail fiscal</option>
-                        <?php foreach ($expenseFiscalSubcategoryLabels as $value => $label): ?>
-                        <option value="<?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8') ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-group js-expense-other-group" style="display:none;">
-                    <label>Autre a decrire</label>
-                    <input type="text" class="filter-input js-expense-other-input" name="expense_subcategory_other" placeholder="Ex: Maintenance imprimerie">
-                </div>
-                <div class="filter-group">
-                    <label>Statut</label>
-                    <select class="filter-select js-status-select" name="status" required>
-                        <option value="draft">Brouillon</option>
-                        <option value="posted">Validee</option>
-                        <option value="void">Annulee</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label class="js-amount-label">Montant</label>
-                    <input type="number" class="filter-input js-debt-amount" name="amount" min="0.01" step="0.01" required>
-                </div>
-                <div class="filter-group">
-                    <label>Compte</label>
-                    <select class="filter-select js-account-select" name="account_id">
-                        <option value="">Compte systeme automatique</option>
-                        <?php foreach ($accounts as $account): ?>
-                        <option value="<?= (int) $account['id'] ?>">
-                            <?= htmlspecialchars((string) $account['code'] . ' ' . (string) $account['name'], ENT_QUOTES, 'UTF-8') ?>
-                        </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <small class="js-fiscal-treasury-note" style="display:none;color:var(--text-secondary);font-size:11px;">Les depenses fiscales sont prelevees automatiquement depuis la tresorerie.</small>
-                </div>
-                <div class="filter-group">
-                    <label>Reference</label>
-                    <input type="text" class="filter-input" name="reference_preview" value="<?= htmlspecialchars((string) $nextTransactionReference, ENT_QUOTES, 'UTF-8') ?>" readonly>
-                    <small class="text-secondary" style="font-size:11px;">Reference generee automatiquement a l'enregistrement.</small>
-                </div>
-                <div class="filter-group js-debt-client-group" style="grid-column: 1 / -1; display:none;">
-                    <label>Client endette</label>
-                    <div class="debt-client-search">
-                        <input type="text" class="filter-input js-debt-client-query" placeholder="Nom ou telephone">
-                        <input type="hidden" name="debt_client_name" class="js-debt-client-name">
-                        <input type="hidden" name="debt_client_phone" class="js-debt-client-phone">
-                        <div class="client-suggestions debt-client-suggestions js-debt-client-suggestions" hidden></div>
-                    </div>
-                    <small class="text-secondary" style="font-size:11px;">Tapez pour rechercher un client avec factures impayees.</small>
-                </div>
-                <div class="filter-group js-debt-invoices-group" style="grid-column: 1 / -1; display:none;">
-                    <label>Factures concernees</label>
-                    <div class="debt-invoice-list js-debt-invoice-list"></div>
-                    <small class="text-secondary js-debt-invoice-summary" style="font-size:11px;"></small>
-                </div>
-                <div class="filter-group" style="grid-column: 1 / -1;">
-                    <label>Description</label>
-                    <input type="text" class="filter-input js-transaction-description" name="description" placeholder="Description de l'ecriture" required>
-                </div>
-            </div>
+	                    <div class="filters-grid">
+	                        <div class="filter-group">
+	                            <label>Date</label>
+	                            <input type="date" class="filter-input" name="transaction_date" value="<?= htmlspecialchars(date('Y-m-d'), ENT_QUOTES, 'UTF-8') ?>" required>
+	                        </div>
+	                        <div class="filter-group">
+	                            <label>Type</label>
+	                            <select class="filter-select js-transaction-type" name="type" required>
+	                                <option value="income">Revenu occasionnel</option>
+	                                <option value="expense">Depense</option>
+	                                <option value="debt_payment">Remboursement de dettes</option>
+	                            </select>
+	                        </div>
+	                        <div class="filter-group js-expense-subcategory-group" style="display:none;">
+	                            <label>Sous-categorie depense</label>
+	                            <select class="filter-select js-expense-subcategory" name="expense_subcategory">
+	                                <option value="">Selectionnez une sous-categorie</option>
+	                                <?php foreach ($expenseSubcategoryLabels as $value => $label): ?>
+	                                <option value="<?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8') ?></option>
+	                                <?php endforeach; ?>
+	                            </select>
+	                        </div>
+	                        <div class="filter-group js-expense-fiscal-group" style="display:none;">
+	                            <label>Detail fiscal</label>
+	                            <select class="filter-select js-expense-fiscal-subcategory" name="expense_fiscal_subcategory">
+	                                <option value="">Selectionnez un detail fiscal</option>
+	                                <?php foreach ($expenseFiscalSubcategoryLabels as $value => $label): ?>
+	                                <option value="<?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8') ?></option>
+	                                <?php endforeach; ?>
+	                            </select>
+	                        </div>
+	                        <div class="filter-group js-expense-other-group" style="display:none;">
+	                            <label>Autre a decrire</label>
+	                            <input type="text" class="filter-input js-expense-other-input" name="expense_subcategory_other" placeholder="Ex: Maintenance imprimerie">
+	                        </div>
+	                        <div class="filter-group">
+	                            <label>Statut</label>
+	                            <select class="filter-select js-status-select" name="status" required>
+	                                <option value="draft">Brouillon</option>
+	                                <option value="posted">Validee</option>
+	                                <option value="void">Annulee</option>
+	                            </select>
+	                        </div>
+	                        <div class="filter-group">
+	                            <label class="js-amount-label">Montant</label>
+	                            <input type="number" class="filter-input js-debt-amount" name="amount" min="0.01" step="0.01" required>
+	                        </div>
+	                        <div class="filter-group">
+	                            <label>Reference</label>
+	                            <input type="text" class="filter-input" name="reference_preview" value="<?= htmlspecialchars((string) $nextTransactionReference, ENT_QUOTES, 'UTF-8') ?>" readonly>
+	                            <small class="text-secondary" style="font-size:11px;">Reference generee automatiquement a l'enregistrement.</small>
+	                        </div>
+	                        <div class="filter-group js-debt-client-group" style="grid-column: 1 / -1; display:none;">
+	                            <label>Client endette</label>
+	                            <div class="debt-client-search">
+	                                <input type="text" class="filter-input js-debt-client-query" placeholder="Nom ou telephone">
+	                                <input type="hidden" name="debt_client_name" class="js-debt-client-name">
+	                                <input type="hidden" name="debt_client_phone" class="js-debt-client-phone">
+	                                <div class="client-suggestions debt-client-suggestions js-debt-client-suggestions" hidden></div>
+	                            </div>
+	                            <small class="text-secondary" style="font-size:11px;">Tapez pour rechercher un client avec factures impayees.</small>
+	                        </div>
+	                        <div class="filter-group js-debt-invoices-group" style="grid-column: 1 / -1; display:none;">
+	                            <label>Factures concernees</label>
+	                            <div class="debt-invoice-list js-debt-invoice-list"></div>
+	                            <small class="text-secondary js-debt-invoice-summary" style="font-size:11px;"></small>
+	                        </div>
+	                        <div class="filter-group" style="grid-column: 1 / -1;">
+	                            <label>Description</label>
+	                            <input type="text" class="filter-input js-transaction-description" name="description" placeholder="Description de l'ecriture" required>
+	                        </div>
+	                    </div>
 
-            <div class="filter-actions">
-                <button type="button" class="btn" onclick="window.location.href='/transactions'">Annuler</button>
-                <button type="submit" class="btn btn-add">Enregistrer</button>
-            </div>
-        </form>
-    </div>
-    <?php endif; ?>
+	                    <div class="filter-actions">
+	                        <button type="button" class="btn" data-transaction-modal-close="true">Annuler</button>
+	                        <button type="submit" class="btn btn-add">Enregistrer</button>
+	                    </div>
+	                </form>
+	            </div>
+	        </div>
+	    </div>
 
     <?php if (is_array($editingTransaction) && $editingTransaction !== []): ?>
     <div class="card" style="margin-bottom: 20px;">
@@ -234,16 +227,19 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
                     <label>Date</label>
                     <input type="date" class="filter-input" name="transaction_date" value="<?= htmlspecialchars((string) $editingTransaction['transaction_date'], ENT_QUOTES, 'UTF-8') ?>" required>
                 </div>
-                <div class="filter-group">
-                    <label>Type</label>
-                    <select class="filter-select js-transaction-type" name="type" required>
-                        <option value="income" <?= ($editingTransaction['type'] === 'income') ? 'selected' : '' ?>>Revenu occasionnel</option>
-                        <option value="expense" <?= ($editingTransaction['type'] === 'expense') ? 'selected' : '' ?>>Depense</option>
-                        <option value="transfer" <?= ($editingTransaction['type'] === 'transfer') ? 'selected' : '' ?>>Transfert</option>
-                        <option value="journal" <?= ($editingTransaction['type'] === 'journal') ? 'selected' : '' ?>>Journal</option>
-                        <option value="debt_payment" <?= ($editingTransaction['type'] === 'debt_payment') ? 'selected' : '' ?>>Remboursement de dettes</option>
-                    </select>
-                </div>
+	                <div class="filter-group">
+	                    <label>Type</label>
+	                    <select class="filter-select js-transaction-type" name="type" required>
+	                        <option value="income" <?= ($editingTransaction['type'] === 'income') ? 'selected' : '' ?>>Revenu occasionnel</option>
+	                        <option value="expense" <?= ($editingTransaction['type'] === 'expense') ? 'selected' : '' ?>>Depense</option>
+	                        <?php if (in_array((string) ($editingTransaction['type'] ?? ''), ['transfer', 'journal'], true)): ?>
+	                        <option value="<?= htmlspecialchars((string) $editingTransaction['type'], ENT_QUOTES, 'UTF-8') ?>" selected disabled>
+	                            <?= ($editingTransaction['type'] === 'transfer') ? 'Transfert (desactive)' : 'Journal (desactive)' ?>
+	                        </option>
+	                        <?php endif; ?>
+	                        <option value="debt_payment" <?= ($editingTransaction['type'] === 'debt_payment') ? 'selected' : '' ?>>Remboursement de dettes</option>
+	                    </select>
+	                </div>
                 <div class="filter-group js-expense-subcategory-group" style="<?= (($editingTransaction['type'] ?? '') === 'expense') ? '' : 'display:none;' ?>">
                     <label>Sous-categorie depense</label>
                     <select class="filter-select js-expense-subcategory" name="expense_subcategory">
@@ -294,26 +290,11 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
                     <label class="js-amount-label">Montant</label>
                     <input type="number" class="filter-input js-debt-amount" name="amount" min="0.01" step="0.01" value="<?= htmlspecialchars(number_format($existingAmount, 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>" required>
                 </div>
-                <div class="filter-group">
-                    <label>Compte</label>
-                    <select class="filter-select js-account-select" name="account_id">
-                        <option value="">Compte systeme automatique</option>
-                        <?php foreach ($accounts as $account): ?>
-                        <option
-                            value="<?= (int) $account['id'] ?>"
-                            <?= ((int) ($firstEntry['account_id'] ?? 0) === (int) $account['id']) ? 'selected' : '' ?>
-                        >
-                            <?= htmlspecialchars((string) $account['code'] . ' ' . (string) $account['name'], ENT_QUOTES, 'UTF-8') ?>
-                        </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <small class="js-fiscal-treasury-note" style="<?= (($editingTransaction['type'] ?? '') === 'expense' && ($editingTransaction['expense_subcategory'] ?? '') === 'fiscal') ? '' : 'display:none;' ?>;color:var(--text-secondary);font-size:11px;">Les depenses fiscales sont prelevees automatiquement depuis la tresorerie.</small>
-                </div>
-                <div class="filter-group">
-                    <label>Reference</label>
-                    <input type="text" class="filter-input" name="reference_preview" value="<?= htmlspecialchars((string) ($editingTransaction['reference'] ?? '-'), ENT_QUOTES, 'UTF-8') ?>" readonly>
-                    <small class="text-secondary" style="font-size:11px;">Reference gerée automatiquement.</small>
-                </div>
+	                <div class="filter-group">
+	                    <label>Reference</label>
+	                    <input type="text" class="filter-input" name="reference_preview" value="<?= htmlspecialchars((string) ($editingTransaction['reference'] ?? '-'), ENT_QUOTES, 'UTF-8') ?>" readonly>
+	                    <small class="text-secondary" style="font-size:11px;">Reference gerée automatiquement.</small>
+	                </div>
                 <div class="filter-group" style="grid-column: 1 / -1;">
                     <label>Description</label>
                     <input type="text" class="filter-input js-transaction-description" name="description" value="<?= htmlspecialchars((string) $editingTransaction['description'], ENT_QUOTES, 'UTF-8') ?>" required>
@@ -343,18 +324,21 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
                     <input type="date" class="filter-input" name="to_date" value="<?= htmlspecialchars((string) $filters['to_date'], ENT_QUOTES, 'UTF-8') ?>">
                 </div>
 
-                <div class="filter-group">
-                    <label>Type</label>
-                    <select class="filter-select" name="type">
-                        <option value="">Tous</option>
-                        <option value="income" <?= ($filters['type'] === 'income') ? 'selected' : '' ?>>Revenu occasionnel</option>
-                        <option value="expense" <?= ($filters['type'] === 'expense') ? 'selected' : '' ?>>Depense</option>
-                        <option value="transfer" <?= ($filters['type'] === 'transfer') ? 'selected' : '' ?>>Transfert</option>
-                        <option value="journal" <?= ($filters['type'] === 'journal') ? 'selected' : '' ?>>Journal</option>
-                        <option value="billing" <?= ($filters['type'] === 'billing') ? 'selected' : '' ?>>Facturation</option>
-                        <option value="debt_payment" <?= ($filters['type'] === 'debt_payment') ? 'selected' : '' ?>>Remboursement de dettes</option>
-                    </select>
-                </div>
+	                <div class="filter-group">
+	                    <label>Type</label>
+	                    <select class="filter-select" name="type">
+	                        <option value="">Tous</option>
+	                        <option value="income" <?= ($filters['type'] === 'income') ? 'selected' : '' ?>>Revenu occasionnel</option>
+	                        <option value="expense" <?= ($filters['type'] === 'expense') ? 'selected' : '' ?>>Depense</option>
+	                        <?php if (in_array((string) ($filters['type'] ?? ''), ['transfer', 'journal'], true)): ?>
+	                        <option value="<?= htmlspecialchars((string) $filters['type'], ENT_QUOTES, 'UTF-8') ?>" selected disabled>
+	                            <?= ($filters['type'] === 'transfer') ? 'Transfert (desactive)' : 'Journal (desactive)' ?>
+	                        </option>
+	                        <?php endif; ?>
+	                        <option value="billing" <?= ($filters['type'] === 'billing') ? 'selected' : '' ?>>Facturation</option>
+	                        <option value="debt_payment" <?= ($filters['type'] === 'debt_payment') ? 'selected' : '' ?>>Remboursement de dettes</option>
+	                    </select>
+	                </div>
 
                 <div class="filter-group">
                     <label>Statut</label>
@@ -525,6 +509,48 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
 .flash-error {
     background: rgba(239, 68, 68, 0.14);
     color: var(--danger);
+}
+
+.transaction-modal-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(15, 23, 42, 0.48);
+    z-index: 60;
+}
+
+.transaction-modal-overlay.is-open {
+    display: flex;
+}
+
+.transaction-modal-dialog {
+    width: min(900px, 100%);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(2, 6, 23, 0.35);
+    overflow: hidden;
+}
+
+.transaction-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-primary);
+}
+
+.transaction-modal-body {
+    padding: 14px;
+    overflow: auto;
 }
 
 .filters-card {
@@ -731,6 +757,84 @@ $exportUrl = '/transactions/export' . ($exportQuery !== [] ? '?' . http_build_qu
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    const createModal = document.getElementById('transaction-create-modal');
+    const openCreateBtn = document.getElementById('open-transaction-create-modal');
+    const closeCreateBtn = document.getElementById('transaction-create-close');
+    const shouldOpenCreateModal = <?= $showCreateForm ? 'true' : 'false' ?>;
+
+    const setCreateModeQuery = (enabled) => {
+        const url = new URL(window.location.href);
+        if (enabled) {
+            url.searchParams.set('mode', 'create');
+        } else {
+            url.searchParams.delete('mode');
+            url.searchParams.delete('error');
+            url.searchParams.delete('success');
+        }
+        window.history.replaceState({}, '', url.toString());
+    };
+
+    const openCreateModal = ({ updateUrl = true } = {}) => {
+        if (!createModal) {
+            return;
+        }
+        createModal.classList.add('is-open');
+        createModal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+        if (updateUrl) {
+            setCreateModeQuery(true);
+        }
+        const focusTarget = createModal.querySelector('input:not([type="hidden"]), select, textarea');
+        if (focusTarget) {
+            focusTarget.focus({ preventScroll: true });
+        }
+    };
+
+    const closeCreateModal = ({ updateUrl = true } = {}) => {
+        if (!createModal) {
+            return;
+        }
+        createModal.classList.remove('is-open');
+        createModal.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+        if (updateUrl) {
+            setCreateModeQuery(false);
+        }
+    };
+
+    if (openCreateBtn) {
+        openCreateBtn.addEventListener('click', () => openCreateModal({ updateUrl: true }));
+    }
+
+    if (closeCreateBtn) {
+        closeCreateBtn.addEventListener('click', () => closeCreateModal({ updateUrl: true }));
+    }
+
+    if (createModal) {
+        createModal.querySelectorAll('[data-transaction-modal-close="true"]').forEach((btn) => {
+            btn.addEventListener('click', () => closeCreateModal({ updateUrl: true }));
+        });
+
+        createModal.addEventListener('click', (event) => {
+            if (event.target === createModal) {
+                closeCreateModal({ updateUrl: true });
+            }
+        });
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') {
+            return;
+        }
+        if (createModal && createModal.classList.contains('is-open')) {
+            closeCreateModal({ updateUrl: true });
+        }
+    });
+
+    if (shouldOpenCreateModal) {
+        openCreateModal({ updateUrl: false });
+    }
+
     const forms = document.querySelectorAll('.transaction-create-form');
 
     forms.forEach((form) => {

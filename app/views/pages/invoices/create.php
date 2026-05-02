@@ -5,12 +5,17 @@ $isTemplateMode = $isTemplateMode ?? (isset($_GET['template']) && $_GET['templat
 $invoiceNumber = $invoiceNumber ?? ('INV-' . date('Y') . '-' . str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT));
 $flashError = $flashError ?? '';
 $isEditMode = $isEditMode ?? false;
-$invoiceToEdit = $invoiceToEdit ?? null;
+$invoiceToEdit = isset($invoiceToEdit) && is_array($invoiceToEdit) ? $invoiceToEdit : [];
 $formAction = $formAction ?? '/invoices/store';
 $submitLabel = $submitLabel ?? 'Enregistrer la vente';
 $canSaveDraft = $canSaveDraft ?? true;
 $invoiceProducts = $invoiceProducts ?? [];
 $defaultTaxRate = isset($defaultTaxRate) ? round((float) $defaultTaxRate, 2) : 0.0;
+$documentType = $documentType ?? (string) ($invoiceToEdit['document_type'] ?? 'invoice');
+$documentType = in_array($documentType, ['invoice', 'proforma'], true) ? $documentType : 'invoice';
+$isProformaDocument = $documentType === 'proforma';
+$laborAmountValue = isset($invoiceToEdit['labor_amount']) ? round((float) $invoiceToEdit['labor_amount'], 2) : 0.0;
+$laborTaxRateValue = isset($invoiceToEdit['labor_tax_rate']) ? round((float) $invoiceToEdit['labor_tax_rate'], 2) : 0.0;
 $csrfToken = App\Core\Security::generateCSRF();
 $paymentMethodValue = (string) ($invoiceToEdit['payment_method'] ?? 'especes');
 $allowedPaymentMethods = ['virement', 'mobile-money', 'carte', 'especes'];
@@ -22,6 +27,7 @@ $invoiceType = 'product';
 $clientType = 'known';
 $clientNameValue = (string) ($invoiceToEdit['customer_name'] ?? '');
 $clientPhoneValue = (string) ($invoiceToEdit['customer_phone'] ?? '');
+$clientDescriptionValue = (string) ($invoiceToEdit['customer_description'] ?? '');
 $clientLookupValue = '';
 if ($clientPhoneValue !== '' && $clientNameValue !== '') {
     $clientLookupValue = $clientPhoneValue . ' - ' . $clientNameValue;
@@ -63,16 +69,17 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         $clientType = 'anonymous';
     }
     $lineItems = [];
-    foreach (($invoiceToEdit['items'] ?? []) as $item) {
-        $lineItems[] = [
-            'description' => (string) ($item['description'] ?? ''),
-            'product_id' => isset($item['product_id']) ? (int) $item['product_id'] : null,
-            'unit_code' => (string) ($item['unit_code'] ?? ''),
-            'qty' => (float) ($item['quantity'] ?? 1),
-            'price' => (float) ($item['unit_price'] ?? 0),
-            'tax' => (float) ($item['tax_rate'] ?? $defaultTaxRate),
-        ];
-    }
+	    foreach (($invoiceToEdit['items'] ?? []) as $item) {
+	        $lineItems[] = [
+	            'description' => (string) ($item['description'] ?? ''),
+	            'product_id' => isset($item['product_id']) ? (int) $item['product_id'] : null,
+	            'unit_code' => (string) ($item['unit_code'] ?? ''),
+	            'qty' => (float) ($item['quantity'] ?? 1),
+	            'price' => (float) ($item['unit_price'] ?? 0),
+	            'tax' => (float) ($item['tax_rate'] ?? $defaultTaxRate),
+	            'line_kind' => (string) ($item['line_kind'] ?? 'standard'),
+	        ];
+	    }
     if ($lineItems === []) {
         $lineItems[] = ['description' => '', 'product_id' => null, 'unit_code' => '', 'qty' => 1, 'price' => 0, 'tax' => $defaultTaxRate];
     }
@@ -82,10 +89,12 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 <div class="invoice-create-page">
     <div class="page-header invoice-header">
         <div>
-            <p class="invoice-breadcrumb">Ventes / <?= $isEditMode ? 'Modifier brouillon' : 'Nouvelle vente' ?></p>
-            <h1 class="page-title invoice-title-hero"><?= $isEditMode ? 'Modifier la vente brouillon' : 'Enregistrer une vente' ?></h1>
+            <p class="invoice-breadcrumb">Ventes / <?= $isEditMode ? ($isProformaDocument ? 'Modifier proforma' : 'Modifier brouillon') : ($isProformaDocument ? 'Nouveau proforma' : 'Nouvelle vente') ?></p>
+            <h1 class="page-title invoice-title-hero"><?= $isEditMode ? ($isProformaDocument ? 'Modifier le proforma' : 'Modifier la vente brouillon') : ($isProformaDocument ? 'Creer un proforma' : 'Enregistrer une vente') ?></h1>
             <p class="page-subtitle invoice-subtitle-hero">
-                <?= $isEditMode ? 'Completez le brouillon puis validez la vente.' : 'Renseigne rapidement le client, les produits et valide la vente.' ?>
+                <?= $isEditMode
+                    ? ($isProformaDocument ? 'Mettez a jour le proforma puis imprimez-le.' : 'Completez le brouillon puis validez la vente.')
+                    : ($isProformaDocument ? 'Cree un proforma a partager avant facturation.' : 'Renseigne rapidement le client, les produits et valide la vente.') ?>
             </p>
         </div>
         <a href="/invoices" class="btn btn-soft"><i class="fa-solid fa-arrow-left"></i> Retour aux ventes</a>
@@ -99,6 +108,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 
     <form id="invoice-form" action="<?= htmlspecialchars((string) $formAction, ENT_QUOTES, 'UTF-8') ?>" method="POST" novalidate>
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+        <input type="hidden" name="document_type" value="<?= htmlspecialchars($documentType, ENT_QUOTES, 'UTF-8') ?>">
         <input type="hidden" id="invoice-status-field" name="status" value="<?= htmlspecialchars((string) (($invoiceToEdit['status'] ?? 'envoyee')), ENT_QUOTES, 'UTF-8') ?>">
         <input type="hidden" id="summary-subtotal-input" name="summary_subtotal" value="0">
         <input type="hidden" id="summary-tax-input" name="summary_tax" value="0">
@@ -107,10 +117,10 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         <div class="invoice-create-layout">
             <div class="invoice-form-column">
                 <section class="card invoice-section">
-                    <h3 class="section-title">Informations vente</h3>
+                    <h3 class="section-title"><?= $isProformaDocument ? 'Informations proforma' : 'Informations vente' ?></h3>
                     <div class="form-grid form-grid-three">
                         <label class="form-field">
-                            <span>Numero vente</span>
+                            <span><?= $isProformaDocument ? 'Numero proforma' : 'Numero vente' ?></span>
                             <input type="text" name="invoice_number" value="<?= htmlspecialchars((string) ($invoiceToEdit['invoice_number'] ?? $invoiceNumber), ENT_QUOTES, 'UTF-8') ?>" readonly required>
                             <small class="text-secondary" style="font-size:11px;">Numero genere automatiquement.</small>
                         </label>
@@ -148,11 +158,11 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                 </section>
 
                 <section class="card invoice-section">
-                    <h3 class="section-title">Client</h3>
-                    <div class="form-grid form-grid-two">
-                        <label class="form-field form-field-full">
-                            <span>Type de client</span>
-                            <div class="client-type-toggle">
+	                    <h3 class="section-title">Client</h3>
+	                    <div class="form-grid form-grid-two">
+	                        <label class="form-field form-field-full">
+	                            <span>Type de client</span>
+	                            <div class="client-type-toggle">
                                 <label>
                                     <input type="radio" name="client_type" value="known" <?= $clientType === 'known' ? 'checked' : '' ?>>
                                     Client connu
@@ -163,23 +173,31 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                                 </label>
                             </div>
                         </label>
-                        <label class="form-field client-known-field form-field-full">
-                            <span>Nom ou telephone</span>
-                            <input type="text" id="client-lookup-input" name="client_lookup" placeholder="Nom ou numero de telephone" value="<?= htmlspecialchars($clientLookupValue, ENT_QUOTES, 'UTF-8') ?>" autocomplete="off">
-                            <input type="hidden" name="client_name" id="client-name-hidden" value="<?= htmlspecialchars($clientNameValue, ENT_QUOTES, 'UTF-8') ?>">
-                            <input type="hidden" name="client_phone" id="client-phone-hidden" value="<?= htmlspecialchars($clientPhoneValue, ENT_QUOTES, 'UTF-8') ?>">
-                            <div class="client-suggestions" id="client-suggestions" hidden></div>
-                            <small class="text-secondary" style="font-size:11px;">Tapez un nom ou un numero. Les suggestions s'affichent en temps reel.</small>
-                        </label>
-                        
-                    </div>
-                </section>
+	                        <label class="form-field client-known-field form-field-full">
+	                            <span>Nom ou telephone</span>
+	                            <input type="text" id="client-lookup-input" name="client_lookup" placeholder="Nom ou numero de telephone" value="<?= htmlspecialchars($clientLookupValue, ENT_QUOTES, 'UTF-8') ?>" autocomplete="off">
+	                            <input type="hidden" name="client_name" id="client-name-hidden" value="<?= htmlspecialchars($clientNameValue, ENT_QUOTES, 'UTF-8') ?>">
+	                            <input type="hidden" name="client_phone" id="client-phone-hidden" value="<?= htmlspecialchars($clientPhoneValue, ENT_QUOTES, 'UTF-8') ?>">
+	                            <div class="client-suggestions" id="client-suggestions" hidden></div>
+	                            <small class="text-secondary" style="font-size:11px;">Tapez un nom ou un numero. Les suggestions s'affichent en temps reel.</small>
+	                        </label>
+	                        <label class="form-field client-known-field form-field-full">
+	                            <span>Description (optionnel)</span>
+	                            <textarea name="client_description" rows="2" placeholder="Ex: personne de contact, quartier, consigne de livraison..."><?= htmlspecialchars($clientDescriptionValue, ENT_QUOTES, 'UTF-8') ?></textarea>
+	                            <small class="text-secondary" style="font-size:11px;">Affichee dans l'entete Client sur le proforma / la facture.</small>
+	                        </label>
+	                        
+	                    </div>
+	                </section>
 
-                <section class="card invoice-section">
-                    <div class="section-header">
-                        <h3 class="section-title">Lignes de vente</h3>
-                        <button type="button" class="btn btn-add" id="add-line-btn"> + Ajouter une ligne</button>
-                    </div>
+	                <section class="card invoice-section">
+	                    <div class="section-header">
+	                        <h3 class="section-title">Lignes de vente</h3>
+	                        <div style="display:flex; gap:10px; align-items:center;">
+	                            <button type="button" class="btn btn-soft" id="add-other-line-btn"> + Autre</button>
+	                            <button type="button" class="btn btn-add" id="add-line-btn"> + Ajouter une ligne</button>
+	                        </div>
+	                    </div>
 
                     <div class="line-items-wrap">
                         <table class="line-items-table">
@@ -203,12 +221,47 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                                     <th></th>
                                 </tr>
                             </thead>
-                            <tbody id="line-items-body">
-                                <?php foreach ($lineItems as $item): ?>
-                                <tr class="line-item-row">
-                                    <td>
-                                        <div class="line-product-wrap">
-                                            <select class="line-product-id js-line-input">
+	                            <tbody id="line-items-body">
+	                                <?php foreach ($lineItems as $item): ?>
+	                                <?php $lineKind = strtolower(trim((string) ($item['line_kind'] ?? 'standard'))); ?>
+	                                <?php if ($lineKind === 'other'): ?>
+	                                <tr class="line-item-row line-item-row-other">
+	                                    <td colspan="5">
+	                                        <input
+	                                            type="text"
+	                                            class="line-description js-line-input"
+	                                            placeholder="Autre (frais, remise spéciale, transport...)"
+	                                            value="<?= htmlspecialchars((string) ($item['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+	                                        >
+	                                        <input type="hidden" name="line_description[]" class="line-description-hidden" value="<?= htmlspecialchars((string) ($item['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+	                                        <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
+	                                        <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="other">
+	                                        <input type="hidden" name="line_qty[]" class="line-qty js-line-input" value="1">
+	                                        <input type="hidden" name="line_unit_code[]" class="line-unit-code js-line-input" value="">
+	                                        <input type="hidden" name="line_price[]" class="line-price js-line-input" value="<?= htmlspecialchars(number_format((float) ($item['price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
+	                                        <input type="hidden" name="line_tax[]" class="line-tax js-line-input" value="0">
+	                                    </td>
+	                                    <td>
+	                                        <input
+	                                            type="number"
+	                                            class="line-other-total js-line-input"
+	                                            min="0"
+	                                            step="0.01"
+	                                            value="<?= htmlspecialchars(number_format((float) ($item['price'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>"
+	                                            aria-label="Total ligne"
+	                                        >
+	                                        <span class="line-total" data-line-total style="display:none;">0.00</span>
+	                                    </td>
+	                                    <td>
+	                                        <button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button>
+	                                    </td>
+	                                </tr>
+	                                <?php continue; ?>
+	                                <?php endif; ?>
+	                                <tr class="line-item-row">
+	                                    <td>
+	                                        <div class="line-product-wrap">
+	                                            <select class="line-product-id js-line-input">
                                                 <option value="">Choisir un produit...</option>
                                                 <option value="__search__">Rechercher un produit...</option>
                                                 <?php foreach ($invoiceProducts as $product): ?>
@@ -230,15 +283,16 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                                                 <div class="line-product-search-results"></div>
                                             </div>
                                         </div>
-                                        <input
-                                            type="text"
-                                            class="line-description js-line-input"
-                                            placeholder="Service"
-                                            value="<?= htmlspecialchars((string) $item['description'], ENT_QUOTES, 'UTF-8') ?>"
-                                        >
-                                        <input type="hidden" name="line_description[]" class="line-description-hidden" value="<?= htmlspecialchars((string) $item['description'], ENT_QUOTES, 'UTF-8') ?>">
-                                        <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="<?= htmlspecialchars((string) ((int) ($item['product_id'] ?? 0)), ENT_QUOTES, 'UTF-8') ?>">
-                                    </td>
+	                                        <input
+	                                            type="text"
+	                                            class="line-description js-line-input"
+	                                            placeholder="Service"
+	                                            value="<?= htmlspecialchars((string) $item['description'], ENT_QUOTES, 'UTF-8') ?>"
+	                                        >
+	                                        <input type="hidden" name="line_description[]" class="line-description-hidden" value="<?= htmlspecialchars((string) $item['description'], ENT_QUOTES, 'UTF-8') ?>">
+	                                        <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="<?= htmlspecialchars((string) ((int) ($item['product_id'] ?? 0)), ENT_QUOTES, 'UTF-8') ?>">
+	                                        <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="<?= htmlspecialchars((string) ($item['line_kind'] ?? 'standard'), ENT_QUOTES, 'UTF-8') ?>">
+	                                    </td>
                                     <td>
                                         <input
                                             type="number"
@@ -292,7 +346,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 
             <aside class="invoice-side-column">
                 <section class="card invoice-section summary-card">
-                    <h3 class="section-title">Résumé vente</h3>
+                    <h3 class="section-title"><?= $isProformaDocument ? 'Resume proforma' : 'Resume vente' ?></h3>
                     <div class="summary-group">
                         <div class="summary-row">
                             <span>Sous-total</span>
@@ -301,6 +355,18 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                         <div class="summary-row">
                             <span>TVA</span>
                             <strong id="summary-tax">0.00</strong>
+                        </div>
+                        <div class="summary-row summary-inline">
+                            <label for="labor-amount">Main d'oeuvre</label>
+                            <div class="summary-inline-controls labor-inline-controls">
+                                <input type="number" id="labor-amount" name="labor_amount" min="0" step="0.01" value="<?= htmlspecialchars(number_format($laborAmountValue, 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>">
+                                <select id="labor-tax-rate" name="labor_tax_rate">
+                                    <option value="0" <?= ((float) $laborTaxRateValue) === 0.0 ? 'selected' : '' ?>>TVA 0%</option>
+                                    <option value="5" <?= ((float) $laborTaxRateValue) === 5.0 ? 'selected' : '' ?>>TVA 5%</option>
+                                    <option value="10" <?= ((float) $laborTaxRateValue) === 10.0 ? 'selected' : '' ?>>TVA 10%</option>
+                                    <option value="16" <?= ((float) $laborTaxRateValue) === 16.0 ? 'selected' : '' ?>>TVA 16%</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="summary-row summary-inline">
                             <label for="discount-value">Remise</label>
@@ -688,8 +754,12 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     display: block;
 }
 
-.invoice-type-product .line-description {
+.invoice-type-product .line-item-row:not(.line-item-row-other) .line-description {
     display: none;
+}
+
+.invoice-type-product .line-item-row-other .line-description {
+    display: block;
 }
 
 .invoice-type-service .line-product-wrap {
@@ -750,6 +820,10 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     grid-template-columns: 100px 1fr;
     gap: 8px;
     width: 100%;
+}
+
+.labor-inline-controls {
+    grid-template-columns: 1fr 110px;
 }
 
 .summary-inline-controls select,
@@ -833,8 +907,9 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     if (!form) {
         return;
     }
-    const lineItemsBody = document.getElementById('line-items-body');
-    const addLineBtn = document.getElementById('add-line-btn');
+	    const lineItemsBody = document.getElementById('line-items-body');
+	    const addLineBtn = document.getElementById('add-line-btn');
+	    const addOtherLineBtn = document.getElementById('add-other-line-btn');
     const invoiceTypeSelect = document.getElementById('invoice-type-select');
     const currencySelect = document.getElementById('invoice-currency');
     const issueDateInput = form.querySelector('input[name="issue_date"]');
@@ -850,6 +925,9 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     const discountType = document.getElementById('discount-type');
     const discountValue = document.getElementById('discount-value');
     const depositValue = document.getElementById('deposit-value');
+    const documentTypeField = form.querySelector('input[name="document_type"]');
+    const laborAmountInput = document.getElementById('labor-amount');
+    const laborTaxRateSelect = document.getElementById('labor-tax-rate');
     const statusField = document.getElementById('invoice-status-field');
     const saveDraftBtn = document.getElementById('save-draft-btn');
     const submitInvoiceBtn = document.getElementById('submit-invoice-btn');
@@ -900,6 +978,8 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     let clientLookupTimer = null;
     let clientLookupAbortController = null;
 
+    const isProformaDocument = () => String(documentTypeField?.value || '').trim().toLowerCase() === 'proforma';
+
     // Nouvelle fonction pour masquer/afficher le champ acompte
     // Modifiez la fonction toggleDepositFieldVisibility() existante comme ceci :
 
@@ -908,7 +988,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         const depositRow = depositField?.closest('.summary-row');
         const balanceRow = document.querySelector('.summary-balance');
         
-        if (isAnonymousClient()) {
+        if (isAnonymousClient() || isProformaDocument()) {
             // Si client inconnu, masquer le champ acompte et le reste à payer
             if (depositRow) {
                 depositRow.style.display = 'none';
@@ -1331,7 +1411,9 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         toggleDepositFieldVisibility();
     };
 
-    const getRows = () => Array.from(lineItemsBody.querySelectorAll('.line-item-row'));
+	    const getRows = () => Array.from(lineItemsBody.querySelectorAll('.line-item-row'));
+
+	    const getRowKind = (row) => String(row?.querySelector('.line-kind-hidden')?.value || 'standard').trim().toLowerCase();
     const isProductInvoice = () => invoiceTypeSelect.value === 'product';
     const composeProductDescription = (product) => {
         const chunks = [String(product?.name || '').trim()];
@@ -1493,22 +1575,57 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         return reserved;
     };
 
-    const syncRowDescription = (row) => {
-        const descriptionInput = row.querySelector('.line-description');
-        const descriptionHidden = row.querySelector('.line-description-hidden');
-        const productSelect = row.querySelector('.line-product-id');
-        const productHidden = row.querySelector('.line-product-hidden');
-        const unitSelect = row.querySelector('.line-unit-code');
-        const stockHint = row.querySelector('.line-stock-hint');
-        const qtyInput = row.querySelector('.line-qty');
-        const priceInput = row.querySelector('.line-price');
+	    const syncRowDescription = (row) => {
+	        const rowKind = getRowKind(row);
+	        const descriptionInput = row.querySelector('.line-description');
+	        const descriptionHidden = row.querySelector('.line-description-hidden');
+	        const productSelect = row.querySelector('.line-product-id');
+	        const productHidden = row.querySelector('.line-product-hidden');
+	        const unitSelect = row.querySelector('.line-unit-code');
+	        const stockHint = row.querySelector('.line-stock-hint');
+	        const qtyInput = row.querySelector('.line-qty');
+	        const priceInput = row.querySelector('.line-price');
 
-        if (isProductInvoice()) {
-            const rawProductId = productSelect.value;
-            const productId = rawProductId === SEARCH_OPTION_VALUE ? '' : rawProductId;
-            const product = productById.get(productId) || null;
-            const selectedUnit = String(unitSelect?.value || unitSelect?.dataset.selectedUnit || '').toLowerCase();
-            productHidden.value = productId;
+	        if (rowKind === 'other') {
+	            if (productHidden) {
+	                productHidden.value = '';
+	            }
+	            if (productSelect) {
+	                productSelect.value = '';
+	            }
+	            if (unitSelect) {
+	                unitSelect.value = '';
+	                unitSelect.dataset.selectedUnit = '';
+	            }
+	            if (stockHint) {
+	                stockHint.textContent = '';
+	            }
+	            if (descriptionHidden) {
+	                descriptionHidden.value = String(descriptionInput?.value || '').trim();
+	            }
+	            if (qtyInput) {
+	                setInputValue(qtyInput, '1');
+	            }
+	            const taxInput = row.querySelector('.line-tax');
+	            if (taxInput) {
+	                setInputValue(taxInput, '0');
+	            }
+	            const otherTotal = row.querySelector('.line-other-total');
+	            if (priceInput && otherTotal) {
+	                setInputValue(priceInput, String(parseNumber(otherTotal.value || '0').toFixed(2)));
+	            }
+	            return;
+	        }
+
+	        if (isProductInvoice()) {
+	            if (!productSelect || !productHidden || !descriptionInput || !descriptionHidden) {
+	                return;
+	            }
+	            const rawProductId = productSelect.value;
+	            const productId = rawProductId === SEARCH_OPTION_VALUE ? '' : rawProductId;
+	            const product = productById.get(productId) || null;
+	            const selectedUnit = String(unitSelect?.value || unitSelect?.dataset.selectedUnit || '').toLowerCase();
+	            productHidden.value = productId;
             descriptionInput.readOnly = false;
             if (priceInput) {
                 priceInput.readOnly = true;
@@ -1565,38 +1682,50 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                 }
             }
             return;
-        }
+	        }
 
-        productHidden.value = '';
-        productSelect.value = '';
-        stockHint.textContent = '';
-        descriptionInput.readOnly = false;
-        if (priceInput) {
-            priceInput.readOnly = false;
-        }
-        descriptionHidden.value = String(descriptionInput.value || '').trim();
-        if (unitSelect) {
-            unitSelect.innerHTML = '<option value="">Unite...</option>';
-            unitSelect.value = '';
-            unitSelect.dataset.selectedUnit = '';
-        }
-        clearFieldError(productSelect);
-        clearFieldError(unitSelect);
-    };
+	        if (productHidden) {
+	            productHidden.value = '';
+	        }
+	        if (productSelect) {
+	            productSelect.value = '';
+	        }
+	        if (stockHint) {
+	            stockHint.textContent = '';
+	        }
+	        if (descriptionInput) {
+	            descriptionInput.readOnly = false;
+	        }
+	        if (priceInput) {
+	            priceInput.readOnly = false;
+	        }
+	        if (descriptionHidden) {
+	            descriptionHidden.value = String(descriptionInput?.value || '').trim();
+	        }
+	        if (unitSelect) {
+	            unitSelect.innerHTML = '<option value="">Unite...</option>';
+	            unitSelect.value = '';
+	            unitSelect.dataset.selectedUnit = '';
+	        }
+	        clearFieldError(productSelect);
+	        clearFieldError(unitSelect);
+	    };
 
-    const validateLineRow = (row) => {
-        if (!row) {
-            return true;
-        }
-        syncRowDescription(row);
-        const descriptionInput = row.querySelector('.line-description');
-        const descriptionHidden = row.querySelector('.line-description-hidden');
-        const productSelect = row.querySelector('.line-product-id');
-        const productHidden = row.querySelector('.line-product-hidden');
-        const qtyInput = row.querySelector('.line-qty');
-        const unitSelect = row.querySelector('.line-unit-code');
-        const priceInput = row.querySelector('.line-price');
-        let rowValid = true;
+	    const validateLineRow = (row) => {
+	        if (!row) {
+	            return true;
+	        }
+	        const rowKind = getRowKind(row);
+	        syncRowDescription(row);
+	        const descriptionInput = row.querySelector('.line-description');
+	        const descriptionHidden = row.querySelector('.line-description-hidden');
+	        const productSelect = row.querySelector('.line-product-id');
+	        const productHidden = row.querySelector('.line-product-hidden');
+	        const qtyInput = row.querySelector('.line-qty');
+	        const unitSelect = row.querySelector('.line-unit-code');
+	        const priceInput = row.querySelector('.line-price');
+	        const otherTotalInput = row.querySelector('.line-other-total');
+	        let rowValid = true;
 
         clearFieldError(descriptionInput);
         clearFieldError(productSelect);
@@ -1604,11 +1733,24 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         clearFieldError(unitSelect);
         clearFieldError(priceInput);
 
-        if (isProductInvoice()) {
-            if (String(productHidden?.value || '').trim() === '') {
-                setFieldError(productSelect, 'Choisissez un produit.');
-                rowValid = false;
-            }
+	        if (rowKind === 'other') {
+	            if (String(descriptionHidden?.value || '').trim() === '') {
+	                setFieldError(descriptionInput, 'Renseignez la description.');
+	                rowValid = false;
+	            }
+	            const totalValue = parseNumber(otherTotalInput?.value || priceInput?.value || '0');
+	            if (!otherTotalInput || String(otherTotalInput.value || '').trim() === '' || totalValue < 0) {
+	                setFieldError(otherTotalInput, 'Renseignez le total (>= 0).');
+	                rowValid = false;
+	            }
+	            return rowValid;
+	        }
+
+	        if (isProductInvoice()) {
+	            if (String(productHidden?.value || '').trim() === '') {
+	                setFieldError(productSelect, 'Choisissez un produit.');
+	                rowValid = false;
+	            }
             if (String(unitSelect?.value || '').trim() === '') {
                 setFieldError(unitSelect, 'Choisissez une unite.');
                 rowValid = false;
@@ -1635,19 +1777,40 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         return rowValid;
     };
 
-    const updateRow = (row) => {
-        syncRowDescription(row);
-        const qty = Math.max(parseNumber(row.querySelector('.line-qty').value), 0);
-        const price = parseNumber(row.querySelector('.line-price').value);
-        const taxRate = parseNumber(row.querySelector('.line-tax').value);
-        const subtotal = qty * price;
-        const tax = subtotal * (taxRate / 100);
-        const total = subtotal + tax;
+	    const updateRow = (row) => {
+	        syncRowDescription(row);
+	        const rowKind = getRowKind(row);
+	        const qtyInput = row.querySelector('.line-qty');
+	        const priceInput = row.querySelector('.line-price');
+	        const taxInput = row.querySelector('.line-tax');
+	        const otherTotalInput = row.querySelector('.line-other-total');
 
-        row.dataset.subtotal = String(subtotal);
-        row.dataset.tax = String(tax);
-        row.querySelector('[data-line-total]').textContent = formatMoney(total);
-    };
+	        if (rowKind === 'other') {
+	            if (qtyInput) {
+	                setInputValue(qtyInput, '1');
+	            }
+	            if (taxInput) {
+	                setInputValue(taxInput, '0');
+	            }
+	            if (priceInput && otherTotalInput) {
+	                setInputValue(priceInput, String(parseNumber(otherTotalInput.value || '0').toFixed(2)));
+	            }
+	        }
+
+	        const qty = Math.max(parseNumber(qtyInput?.value || '0'), 0);
+	        const price = parseNumber(priceInput?.value || '0');
+	        const taxRate = parseNumber(taxInput?.value || '0');
+	        const subtotal = qty * price;
+	        const tax = subtotal * (taxRate / 100);
+	        const total = subtotal + tax;
+
+	        row.dataset.subtotal = String(subtotal);
+	        row.dataset.tax = String(tax);
+	        const lineTotalEl = row.querySelector('[data-line-total]');
+	        if (lineTotalEl) {
+	            lineTotalEl.textContent = formatMoney(total);
+	        }
+	    };
 
     const computeSummary = () => {
         let subtotal = 0;
@@ -1658,6 +1821,12 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
             subtotal += parseNumber(row.dataset.subtotal);
             tax += parseNumber(row.dataset.tax);
         });
+
+        const laborAmount = Math.max(parseNumber(laborAmountInput?.value || '0'), 0);
+        const laborTaxRate = Math.max(parseNumber(laborTaxRateSelect?.value || '0'), 0);
+        const laborTax = laborAmount * (laborTaxRate / 100);
+        subtotal += laborAmount;
+        tax += laborTax;
 
         const discountRaw = parseNumber(discountValue.value);
         let discount = discountRaw;
@@ -1670,11 +1839,15 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         discount = Math.min(discount, grossTotal);
 
         const total = Math.max(grossTotal - discount, 0);
-        if (depositValue && !depositManuallyEdited) {
+        if (depositValue && !depositManuallyEdited && !isProformaDocument()) {
             setInputValue(depositValue, total.toFixed(2));
         }
 
         let deposit = parseNumber(depositValue.value);
+        if (isProformaDocument()) {
+            deposit = 0;
+            setInputValue(depositValue, '0');
+        }
         if (deposit > total) {
             deposit = total;
             setInputValue(depositValue, total.toFixed(2));
@@ -1860,9 +2033,9 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         });
     };
 
-    const createRowHtml = () => `
-        <tr class="line-item-row">
-            <td>
+	    const createRowHtml = () => `
+	        <tr class="line-item-row">
+	            <td>
                 <div class="line-product-wrap">
                     <select class="line-product-id js-line-input">
                         ${productOptionsHtml()}
@@ -1873,10 +2046,11 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                         <div class="line-product-search-results"></div>
                     </div>
                 </div>
-                <input type="text" class="line-description js-line-input" placeholder="Article / service">
-                <input type="hidden" name="line_description[]" class="line-description-hidden" value="">
-                <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
-            </td>
+	                <input type="text" class="line-description js-line-input" placeholder="Article / service">
+	                <input type="hidden" name="line_description[]" class="line-description-hidden" value="">
+	                <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
+	                <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="standard">
+	            </td>
             <td><input type="number" name="line_qty[]" class="line-qty js-line-input" min="0.000001" step="0.000001" value="1" required></td>
             <td>
                 <select name="line_unit_code[]" class="line-unit-code js-line-input">
@@ -1894,8 +2068,28 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
             </td>
             <td><span class="line-total" data-line-total>0.00</span></td>
             <td><button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button></td>
-        </tr>
-    `;
+	        </tr>
+	    `;
+
+	    const createOtherRowHtml = () => `
+	        <tr class="line-item-row line-item-row-other">
+	            <td colspan="5">
+	                <input type="text" class="line-description js-line-input" placeholder="Autre (frais, remise spéciale, transport...)">
+	                <input type="hidden" name="line_description[]" class="line-description-hidden" value="">
+	                <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
+	                <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="other">
+	                <input type="hidden" name="line_qty[]" class="line-qty js-line-input" value="1">
+	                <input type="hidden" name="line_unit_code[]" class="line-unit-code js-line-input" value="">
+	                <input type="hidden" name="line_price[]" class="line-price js-line-input" value="0">
+	                <input type="hidden" name="line_tax[]" class="line-tax js-line-input" value="0">
+	            </td>
+	            <td>
+	                <input type="number" class="line-other-total js-line-input" min="0" step="0.01" value="0" aria-label="Total ligne">
+	                <span class="line-total" data-line-total style="display:none;">0.00</span>
+	            </td>
+	            <td><button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button></td>
+	        </tr>
+	    `;
 
     const setInvoiceTypeUi = () => {
         const isProduct = isProductInvoice();
@@ -1910,15 +2104,30 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         computeSummary();
     };
 
-    addLineBtn.addEventListener('click', () => {
-        lineItemsBody.insertAdjacentHTML('beforeend', createRowHtml());
-        attachRowEvents(getRows()[getRows().length - 1]);
-        setInvoiceTypeUi();
-    });
+	    addLineBtn.addEventListener('click', () => {
+	        lineItemsBody.insertAdjacentHTML('beforeend', createRowHtml());
+	        attachRowEvents(getRows()[getRows().length - 1]);
+	        setInvoiceTypeUi();
+	    });
+
+	    if (addOtherLineBtn) {
+	        addOtherLineBtn.addEventListener('click', () => {
+	            lineItemsBody.insertAdjacentHTML('beforeend', createOtherRowHtml());
+	            attachRowEvents(getRows()[getRows().length - 1]);
+	            setInvoiceTypeUi();
+	        });
+	    }
 
     invoiceTypeSelect.addEventListener('change', setInvoiceTypeUi);
     discountType.addEventListener('change', computeSummary);
     discountValue.addEventListener('input', computeSummary);
+    if (laborAmountInput) {
+        laborAmountInput.addEventListener('input', computeSummary);
+        laborAmountInput.addEventListener('change', computeSummary);
+    }
+    if (laborTaxRateSelect) {
+        laborTaxRateSelect.addEventListener('change', computeSummary);
+    }
     depositValue.addEventListener('input', () => {
         if (wasUserEdited(depositValue)) {
             depositManuallyEdited = true;

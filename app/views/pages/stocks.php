@@ -367,18 +367,25 @@ $stockAlertCount = count($stockAlerts);
         </div>
     </div>
 
-    <?php if ($canManageStock): ?>
-    <div class="card stock-action-row" style="margin-bottom: 20px;">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <button type="button" class="btn btn-add" id="toggle-product-form-btn">
-                <i class="fa-solid fa-plus"></i> Creer un lot (nouveau produit)
-            </button>
-        </div>
-        <p class="text-secondary" style="font-size:12px;margin-top:8px;">
-            Les formulaires sont masques par defaut pour eviter l'encombrement.
-        </p>
-    </div>
-    <?php endif; ?>
+	    <?php if ($canManageStock): ?>
+	    <div class="card stock-action-row" style="margin-bottom: 20px;">
+	        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+	            <button type="button" class="btn btn-add" id="toggle-product-form-btn">
+	                <i class="fa-solid fa-plus"></i> Creer un lot (nouveau produit)
+	            </button>
+	            <form method="POST" action="/stock/purchase-orders/generate-critical" style="display:inline-flex;gap:8px;align-items:center;">
+	                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+	                <input type="hidden" name="horizon_days" value="21">
+	                <button type="submit" class="btn btn-soft" title="Genere un bon de commande avec les produits proches du seuil de rupture">
+	                    <i class="fa-solid fa-cart-shopping"></i> Generer bon de commande (seuil)
+	                </button>
+	            </form>
+	        </div>
+	        <p class="text-secondary" style="font-size:12px;margin-top:8px;">
+	            Les formulaires sont masques par defaut pour eviter l'encombrement.
+	        </p>
+	    </div>
+	    <?php endif; ?>
 
     <?php if ($canManageStock): ?>
     <div class="stock-modal-overlay" id="stock-new-lot-modal" aria-hidden="true">

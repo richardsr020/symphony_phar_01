@@ -145,20 +145,23 @@ class InvoicesController extends Controller
         $defaultDueDate = date('Y-m-d', strtotime('+15 days'));
         $company = (new Company())->findById($companyId) ?? [];
         $defaultTaxRate = round((float) ($company['default_tax_rate'] ?? 0), 2);
+        $documentTypeParam = strtolower(trim((string) ($_GET['doc'] ?? 'invoice')));
+        $documentType = $documentTypeParam === 'proforma' ? 'proforma' : 'invoice';
 
         $this->renderMain('invoices/create', [
-            'title' => 'Enregistrer une vente',
+            'title' => $documentType === 'proforma' ? 'Creer un proforma' : 'Enregistrer une vente',
             'isEditMode' => false,
             'formAction' => '/invoices/store',
-            'submitLabel' => 'Enregistrer la vente',
+            'submitLabel' => $documentType === 'proforma' ? 'Enregistrer le proforma' : 'Enregistrer la vente',
             'today' => $today,
             'dueDate' => $defaultDueDate,
             'isTemplateMode' => isset($_GET['template']) && $_GET['template'] === '1',
-            'invoiceNumber' => $this->invoiceModel->generateNextNumber($companyId),
+            'invoiceNumber' => $this->invoiceModel->generateNextNumber($companyId, $documentType),
             'invoiceProducts' => (new Product())->getInvoiceOptions($companyId),
             'defaultTaxRate' => $defaultTaxRate,
             'canSaveDraft' => true,
             'flashError' => $this->resolveError((string) ($_GET['error'] ?? '')),
+            'documentType' => $documentType,
         ]);
     }
 
@@ -188,13 +191,17 @@ class InvoicesController extends Controller
         }
         $company = (new Company())->findById($companyId) ?? [];
         $defaultTaxRate = round((float) ($company['default_tax_rate'] ?? 0), 2);
+        $documentType = strtolower((string) ($invoice['document_type'] ?? 'invoice'));
+        if ($documentType !== 'proforma') {
+            $documentType = 'invoice';
+        }
 
         $this->renderMain('invoices/create', [
-            'title' => 'Modifier vente',
+            'title' => $documentType === 'proforma' ? 'Modifier proforma' : 'Modifier vente',
             'isEditMode' => true,
             'invoiceToEdit' => $invoice,
             'formAction' => '/invoices/update/' . $invoiceId,
-            'submitLabel' => 'Mettre a jour et envoyer',
+            'submitLabel' => $documentType === 'proforma' ? 'Mettre a jour le proforma' : 'Mettre a jour et envoyer',
             'canSaveDraft' => true,
             'today' => (string) ($invoice['invoice_date'] ?? date('Y-m-d')),
             'dueDate' => (string) ($invoice['due_date'] ?? date('Y-m-d')),
@@ -203,6 +210,7 @@ class InvoicesController extends Controller
             'invoiceProducts' => (new Product())->getInvoiceOptions($companyId),
             'defaultTaxRate' => $defaultTaxRate,
             'flashError' => $this->resolveError((string) ($_GET['error'] ?? '')),
+            'documentType' => $documentType,
         ]);
     }
 
@@ -361,13 +369,38 @@ class InvoicesController extends Controller
             $this->redirect('/invoices?error=permission_denied');
         }
 
-        if ($this->invoiceModel->markSent($companyId, $invoiceId)) {
+        $invoice = $this->invoiceModel->findByIdForCompany($companyId, $invoiceId);
+        if ($invoice === null) {
+            $this->redirect('/invoices?error=invoice_not_found');
+        }
+
+        $documentType = strtolower((string) ($invoice['document_type'] ?? 'invoice'));
+        if ($documentType === 'proforma') {
+            try {
+                if ($this->invoiceModel->convertProformaToPaidInvoice($companyId, $invoiceId, $userId)) {
+                    (new Dashboard())->invalidateDashboardCache($companyId);
+                    AuditLogger::log($userId, 'proforma_converted', 'invoices', $invoiceId, null, [
+                        'invoice_number' => (string) ($invoice['invoice_number'] ?? ''),
+                    ]);
+                    $this->redirect('/invoices?success=proforma_converted&view=' . $invoiceId);
+                }
+            } catch (\InvalidArgumentException $exception) {
+                $error = $this->resolveInvalidPayloadErrorCode($exception);
+                $this->redirect('/invoices?error=' . $error . '&view=' . $invoiceId);
+            } catch (\Throwable $exception) {
+                $this->redirect('/invoices?error=invoice_update_failed&view=' . $invoiceId);
+            }
+
+            $this->redirect('/invoices?error=draft_only&view=' . $invoiceId);
+        }
+
+        if ($this->invoiceModel->markSent($companyId, $invoiceId, $userId)) {
             (new Dashboard())->invalidateDashboardCache($companyId);
             AuditLogger::log($userId, 'invoice_sent', 'invoices', $invoiceId);
             $this->redirect('/invoices?success=invoice_sent&view=' . $invoiceId);
         }
 
-        $this->redirect('/invoices?error=draft_only');
+        $this->redirect('/invoices?error=draft_only&view=' . $invoiceId);
     }
 
     public function cancel($id): void
@@ -547,6 +580,7 @@ class InvoicesController extends Controller
             'invoice_created' => 'Facture creee avec succes.',
             'invoice_updated' => 'Brouillon mis a jour.',
             'invoice_sent' => 'Facture envoyee avec succes.',
+            'proforma_converted' => 'Proforma converti en facture payee.',
             'invoice_cancelled' => 'Facture annulee.',
             'invoice_deleted' => 'Facture supprimee avec succes.',
             'payment_recorded' => 'Paiement enregistre.',

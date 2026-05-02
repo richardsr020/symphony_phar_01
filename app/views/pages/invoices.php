@@ -85,6 +85,10 @@ $formatMoney = static function ($value) use ($formatNumber): string {
                 <i class="fa-solid fa-plus"></i>
                 <span>Nouvelle vente</span>
             </a>
+            <a class="btn btn-soft tw-inline-flex tw-items-center tw-gap-2" href="/invoices/create?doc=proforma">
+                <i class="fa-regular fa-file-lines"></i>
+                <span>Creer un proforma</span>
+            </a>
             <?php endif; ?>
         </div>
     </div>
@@ -180,6 +184,8 @@ $formatMoney = static function ($value) use ($formatNumber): string {
                 <?php
                     $invoiceId = (int) ($invoice['id'] ?? 0);
                     $status = (string) ($invoice['status'] ?? 'draft');
+                    $documentType = strtolower(trim((string) ($invoice['document_type'] ?? 'invoice')));
+                    $isProforma = $documentType === 'proforma';
                     $total = (float) ($invoice['total'] ?? 0);
                     $paid = (float) ($invoice['paid_amount'] ?? 0);
                     $remaining = max($total - $paid, 0);
@@ -221,9 +227,11 @@ $formatMoney = static function ($value) use ($formatNumber): string {
                                 <i class="fa-regular fa-pen-to-square"></i>
                             </a>
 
-                            <form method="POST" action="/invoices/send/<?= $invoiceId ?>" class="inline-form" data-async="true" data-async-success="Facture envoyee.">
+                            <form method="POST" action="/invoices/send/<?= $invoiceId ?>" class="inline-form" data-async="true" data-async-success="<?= $isProforma ? 'Proforma converti en facture payee.' : 'Facture envoyee.' ?>">
                                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
-                                <button type="submit" class="btn-icon success" title="Envoyer la facture"><i class="fa-regular fa-paper-plane"></i></button>
+                                <button type="submit" class="btn-icon success" title="<?= $isProforma ? 'Convertir en facture (payee)' : 'Envoyer la facture' ?>">
+                                    <i class="<?= $isProforma ? 'fa-solid fa-file-invoice-dollar' : 'fa-regular fa-paper-plane' ?>"></i>
+                                </button>
                             </form>
                             <?php endif; ?>
 

@@ -11,14 +11,17 @@ use App\Models\Company;
 use App\Models\Dashboard;
 use App\Models\Product;
 use App\Models\ProductFormSettings;
+use App\Models\PurchaseOrder;
 
 class StockController extends Controller
 {
     private Product $productModel;
+    private PurchaseOrder $purchaseOrderModel;
 
     public function __construct()
     {
         $this->productModel = new Product();
+        $this->purchaseOrderModel = new PurchaseOrder();
     }
 
     public function index(): void
@@ -581,6 +584,46 @@ class StockController extends Controller
         }
     }
 
+    public function generateCriticalPurchaseOrder(): void
+    {
+        $sessionUser = Session::get('user', []);
+        $companyId = (int) ($sessionUser['company_id'] ?? 0);
+        $userId = (int) ($sessionUser['id'] ?? 0);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+
+        if ($companyId <= 0 || $userId <= 0) {
+            $this->redirect('/stock?error=auth_required');
+        }
+        if (!RolePermissions::canManageStock($role)) {
+            $this->redirect('/stock?error=permission_denied');
+        }
+
+        $supplierName = trim((string) ($_POST['supplier_name'] ?? ''));
+        if ($supplierName === '') {
+            $supplierName = 'Fournisseur a confirmer';
+        }
+        $horizonDays = (int) ($_POST['horizon_days'] ?? 21);
+
+        try {
+            $generated = $this->purchaseOrderModel->generateOrderFromCritical($companyId, $userId, $supplierName, $horizonDays);
+            if ($generated === null) {
+                $this->redirect('/stock?error=purchase_order_empty');
+            }
+            $orderId = (int) ($generated['order_id'] ?? 0);
+            if ($orderId <= 0) {
+                $this->redirect('/stock?error=purchase_order_create_failed');
+            }
+            AuditLogger::log($userId, 'purchase_order_generated', 'purchase_orders', $orderId, null, [
+                'supplier_name' => $supplierName,
+                'horizon_days' => $horizonDays,
+                'type' => 'critical_stock',
+            ]);
+            $this->redirect('/stock/purchase-orders/preview/' . $orderId);
+        } catch (\Throwable $exception) {
+            $this->redirect('/stock?error=purchase_order_create_failed');
+        }
+    }
+
     public function updatePurchaseOrderStatus($id): void
     {
         $sessionUser = Session::get('user', []);
@@ -704,6 +747,7 @@ class StockController extends Controller
             'lots_deleted_bulk' => 'Lots selectionnes supprimes et stock ajuste.',
             'stock_adjusted' => 'Stock mis a jour.',
             'purchase_order_created' => 'Bon de commande cree.',
+            'purchase_order_generated' => 'Bon de commande genere.',
             'purchase_order_updated' => 'Statut du bon de commande mis a jour.',
             'purchase_order_edited' => 'Bon de commande modifie.',
             'purchase_order_deleted' => 'Bon de commande supprime.',
@@ -735,6 +779,7 @@ class StockController extends Controller
             'invalid_purchase_order' => 'Bon de commande invalide. Verifiez fournisseur et lignes.',
             'invalid_purchase_order_edit' => 'Modification de bon de commande invalide.',
             'purchase_order_create_failed' => 'Impossible de creer le bon de commande.',
+            'purchase_order_empty' => 'Aucun produit critique: bon de commande non genere.',
             'invalid_purchase_order_status' => 'Statut de bon de commande invalide.',
             'purchase_order_update_failed' => 'Impossible de mettre a jour le bon de commande.',
             'purchase_order_not_found' => 'Bon de commande introuvable.',

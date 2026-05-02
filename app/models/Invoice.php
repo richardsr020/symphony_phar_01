@@ -6,6 +6,24 @@ use DateTimeImmutable;
 
 class Invoice extends Model
 {
+    private function hasStockReservation(?array $invoice): bool
+    {
+        if (!is_array($invoice)) {
+            return false;
+        }
+        $items = $invoice['items'] ?? [];
+        if (!is_array($items)) {
+            return false;
+        }
+        foreach ($items as $item) {
+            $movementId = (int) ($item['stock_movement_id'] ?? 0);
+            if ($movementId > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public function getByCompanyPaginated(
         int $companyId,
         array $filters = [],
@@ -58,6 +76,7 @@ class Invoice extends Model
 
         $rows = $this->db->fetchAll(
             'SELECT i.id,
+                    i.document_type,
                     i.invoice_number,
                     i.invoice_date,
                     i.due_date,
@@ -106,6 +125,7 @@ class Invoice extends Model
 
         return $this->db->fetchAll(
             'SELECT i.id,
+                    i.document_type,
                     i.invoice_number,
                     i.invoice_date,
                     i.due_date,
@@ -170,6 +190,7 @@ class Invoice extends Model
 
         return $this->db->fetchAll(
             'SELECT i.id,
+                    i.document_type,
                     i.invoice_number,
                     i.invoice_date,
                     i.due_date,
@@ -222,7 +243,8 @@ class Invoice extends Model
 
         $where = 'i.company_id = :company_id
                   AND i.invoice_date BETWEEN :from_date AND :to_date
-                  AND i.status IN (' . implode(', ', $statusPlaceholders) . ')';
+                  AND i.status IN (' . implode(', ', $statusPlaceholders) . ')
+                  AND COALESCE(i.document_type, \'invoice\') = \'invoice\'';
 
         return $this->db->fetchAll(
             'SELECT i.id,
@@ -244,7 +266,7 @@ class Invoice extends Model
     public function getStatsByCompany(int $companyId): array
     {
         $row = $this->db->fetchOne(
-            'SELECT COALESCE(SUM(CASE WHEN status IN (:draft_status, :sent_status, :paid_status, :overdue_status) THEN total ELSE 0 END), 0) AS total_billed,
+            'SELECT COALESCE(SUM(CASE WHEN status IN (:sent_status, :paid_status, :overdue_status) THEN total ELSE 0 END), 0) AS total_billed,
                     COALESCE(SUM(CASE
                         WHEN status IN (:sent_status, :paid_status, :overdue_status) THEN
                             CASE
@@ -253,13 +275,13 @@ class Invoice extends Model
                             END
                         ELSE 0
                     END), 0) AS total_paid,
-                    COALESCE(SUM(CASE WHEN status IN (:draft_status, :sent_status, :overdue_status) THEN total - COALESCE(paid_amount, 0) ELSE 0 END), 0) AS total_pending,
+                    COALESCE(SUM(CASE WHEN status IN (:sent_status, :overdue_status) THEN total - COALESCE(paid_amount, 0) ELSE 0 END), 0) AS total_pending,
                     COALESCE(SUM(CASE WHEN status = :overdue_status THEN total ELSE 0 END), 0) AS total_overdue
              FROM invoices
-             WHERE company_id = :company_id',
+             WHERE company_id = :company_id
+               AND COALESCE(document_type, \'invoice\') = \'invoice\'',
             [
                 'company_id' => $companyId,
-                'draft_status' => 'draft',
                 'paid_status' => 'paid',
                 'sent_status' => 'sent',
                 'overdue_status' => 'overdue',
@@ -391,6 +413,11 @@ class Invoice extends Model
         }
         $where[] = $identityClause;
 
+        $includeProforma = (bool) ($filters['include_proforma'] ?? false);
+        if (!$includeProforma) {
+            $where[] = 'COALESCE(document_type, \'invoice\') = \'invoice\'';
+        }
+
         $fromDate = $this->normalizeDate((string) ($filters['from_date'] ?? ''));
         if ($fromDate !== null) {
             $where[] = 'invoice_date >= :from_date';
@@ -498,8 +525,10 @@ class Invoice extends Model
                     i.status
              FROM invoices i
              WHERE i.company_id = :company_id
+               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
                AND ' . $identityClause . '
                AND i.status IN (:sent_status, :paid_status, :overdue_status)
+               AND NOT (i.status = :paid_status AND COALESCE(i.paid_amount, 0) <= 0.009)
                AND i.total > COALESCE(i.paid_amount, 0)
              ORDER BY i.invoice_date ASC, i.id ASC',
             array_merge($params, [
@@ -518,17 +547,22 @@ class Invoice extends Model
             : "TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')))";
 
         $invoice = $this->db->fetchOne(
-            'SELECT i.id,
-                    i.invoice_number,
-                    i.invoice_date,
-                    i.due_date,
-                    i.customer_name,
-                    i.customer_phone,
-                    i.customer_tax_id,
-                    i.customer_address,
-                    i.subtotal,
-                    i.tax_rate,
-                    i.tax_amount,
+	            'SELECT i.id,
+	                    i.document_type,
+	                    i.invoice_number,
+	                    i.invoice_date,
+	                    i.due_date,
+	                    i.customer_name,
+	                    i.customer_phone,
+	                    i.customer_tax_id,
+	                    i.customer_address,
+	                    i.customer_description,
+	                    i.subtotal,
+	                    i.tax_rate,
+	                    i.tax_amount,
+	                    i.labor_amount,
+	                    i.labor_tax_rate,
+                    i.labor_tax_amount,
                     i.total,
                     i.paid_amount,
                     i.status,
@@ -557,13 +591,13 @@ class Invoice extends Model
             return null;
         }
 
-        $invoice['items'] = $this->db->fetchAll(
-            'SELECT id, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total
-             FROM invoice_items
-             WHERE invoice_id = :invoice_id
-             ORDER BY id ASC',
-            ['invoice_id' => $invoiceId]
-        );
+	        $invoice['items'] = $this->db->fetchAll(
+	            'SELECT id, line_kind, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total
+	             FROM invoice_items
+	             WHERE invoice_id = :invoice_id
+	             ORDER BY id ASC',
+	            ['invoice_id' => $invoiceId]
+	        );
 
         return $invoice;
     }
@@ -580,12 +614,17 @@ class Invoice extends Model
             throw new \InvalidArgumentException('Seuls les brouillons peuvent etre modifies.');
         }
 
-        $invoiceDate = $this->normalizeDate((string) ($payload['issue_date'] ?? ''));
-        $dueDate = $this->normalizeDate((string) ($payload['due_date'] ?? ''));
-        [$customerName, $customerPhone, $customerTaxId, $customerAddress, $clientType] = $this->resolveClientFromPayload($payload);
-        $requestedStatus = $this->normalizeStatus((string) ($payload['status'] ?? 'draft'));
-        $status = $requestedStatus;
-        $invoiceType = $this->normalizeInvoiceType((string) ($payload['invoice_type'] ?? ($existing['invoice_type'] ?? 'product')));
+	        $invoiceDate = $this->normalizeDate((string) ($payload['issue_date'] ?? ''));
+	        $dueDate = $this->normalizeDate((string) ($payload['due_date'] ?? ''));
+	        [$customerName, $customerPhone, $customerTaxId, $customerAddress, $clientType] = $this->resolveClientFromPayload($payload);
+	        $customerDescription = trim((string) ($payload['client_description'] ?? ''));
+	        if ($clientType === 'anonymous') {
+	            $customerDescription = '';
+	        }
+	        $requestedStatus = $this->normalizeStatus((string) ($payload['status'] ?? 'draft'));
+	        $status = $requestedStatus;
+	        $invoiceType = $this->normalizeInvoiceType((string) ($payload['invoice_type'] ?? ($existing['invoice_type'] ?? 'product')));
+	        $documentType = $this->normalizeDocumentType((string) ($payload['document_type'] ?? ($existing['document_type'] ?? 'invoice')));
 
         if (!in_array($requestedStatus, ['draft', 'sent', 'paid'], true)) {
             $requestedStatus = 'draft';
@@ -594,7 +633,7 @@ class Invoice extends Model
 
         $invoiceNumber = trim((string) ($existing['invoice_number'] ?? ''));
         if ($invoiceNumber === '') {
-            $invoiceNumber = $this->generateNextNumber($companyId);
+            $invoiceNumber = $this->generateNextNumber($companyId, $documentType);
         }
 
         if ($invoiceNumber === '' || $invoiceDate === null || $dueDate === null || $customerName === '') {
@@ -607,8 +646,13 @@ class Invoice extends Model
 
         $parsed = $this->parseInvoiceItemsFromPayload($companyId, $payload, $invoiceType);
         $items = $parsed['items'];
-        $subtotal = (float) $parsed['subtotal'];
-        $taxAmount = (float) $parsed['tax_amount'];
+        $labor = $this->parseLaborFromPayload($payload);
+        $laborAmount = (float) $labor['amount'];
+        $laborTaxRate = (float) $labor['tax_rate'];
+        $laborTaxAmount = (float) $labor['tax_amount'];
+
+        $subtotal = (float) $parsed['subtotal'] + $laborAmount;
+        $taxAmount = (float) $parsed['tax_amount'] + $laborTaxAmount;
         $this->assertStockAvailabilityForItems($companyId, $items, $invoiceType);
 
         $discountType = trim((string) ($payload['discount_type'] ?? 'percent'));
@@ -619,7 +663,11 @@ class Invoice extends Model
         $total = round($gross - $discount, 2);
         $deposit = max(0, round((float) ($payload['deposit_value'] ?? 0), 2));
         $paidAmount = min($deposit, $total);
-        if ($clientType === 'anonymous') {
+        if ($documentType === 'proforma') {
+            $paidAmount = 0.0;
+            $deposit = 0.0;
+            $status = 'draft';
+        } elseif ($clientType === 'anonymous') {
             $paidAmount = $total;
             $deposit = $total;
             $status = 'paid';
@@ -631,7 +679,7 @@ class Invoice extends Model
             $status = $paidAmount >= ($total - 0.009) ? 'paid' : 'sent';
         }
         $remaining = max($total - $paidAmount, 0);
-        if ($clientType === 'anonymous' || $status === 'paid' || $remaining <= 0.009) {
+        if ($documentType !== 'proforma' && ($clientType === 'anonymous' || $status === 'paid' || $remaining <= 0.009)) {
             $dueDate = $invoiceDate;
         }
         $notes = $this->buildNotes($payload, $discountType, $discountRaw, $deposit, $remaining);
@@ -653,19 +701,24 @@ class Invoice extends Model
         $issuer = $this->getIssuerSnapshot($companyId);
 
         $this->db->beginTransaction();
-        try {
-            $this->db->execute(
-                'UPDATE invoices
-                 SET invoice_number = :invoice_number,
-                     invoice_date = :invoice_date,
-                     due_date = :due_date,
-                     customer_name = :customer_name,
-                     customer_phone = :customer_phone,
-                     customer_tax_id = :customer_tax_id,
-                     customer_address = :customer_address,
-                     subtotal = :subtotal,
-                     tax_rate = :tax_rate,
-                     tax_amount = :tax_amount,
+	        try {
+	            $this->db->execute(
+	                'UPDATE invoices
+	                 SET invoice_number = :invoice_number,
+	                    document_type = :document_type,
+	                     invoice_date = :invoice_date,
+	                     due_date = :due_date,
+	                     customer_name = :customer_name,
+	                     customer_phone = :customer_phone,
+	                     customer_tax_id = :customer_tax_id,
+	                     customer_address = :customer_address,
+	                     customer_description = :customer_description,
+	                     subtotal = :subtotal,
+	                     tax_rate = :tax_rate,
+	                     tax_amount = :tax_amount,
+	                     labor_amount = :labor_amount,
+	                     labor_tax_rate = :labor_tax_rate,
+                     labor_tax_amount = :labor_tax_amount,
                     total = :total,
                     paid_amount = :paid_amount,
                      status = :status,
@@ -677,17 +730,22 @@ class Invoice extends Model
                     notes = :notes
                  WHERE id = :id
                    AND company_id = :company_id',
-                [
-                    'invoice_number' => $invoiceNumber,
-                    'invoice_date' => $invoiceDate,
-                    'due_date' => $dueDate,
-                    'customer_name' => $customerName,
-                    'customer_phone' => $customerPhone !== '' ? $customerPhone : null,
-                    'customer_tax_id' => $customerTaxId !== '' ? $customerTaxId : null,
-                    'customer_address' => $customerAddress !== '' ? $customerAddress : null,
-                    'subtotal' => round($subtotal, 2),
-                    'tax_rate' => $averageTaxRate,
-                    'tax_amount' => round($taxAmount, 2),
+	                [
+	                    'invoice_number' => $invoiceNumber,
+	                    'document_type' => $documentType,
+	                    'invoice_date' => $invoiceDate,
+	                    'due_date' => $dueDate,
+	                    'customer_name' => $customerName,
+	                    'customer_phone' => $customerPhone !== '' ? $customerPhone : null,
+	                    'customer_tax_id' => $customerTaxId !== '' ? $customerTaxId : null,
+	                    'customer_address' => $customerAddress !== '' ? $customerAddress : null,
+	                    'customer_description' => $customerDescription !== '' ? $customerDescription : null,
+	                    'subtotal' => round($subtotal, 2),
+	                    'tax_rate' => $averageTaxRate,
+	                    'tax_amount' => round($taxAmount, 2),
+	                    'labor_amount' => round($laborAmount, 2),
+                    'labor_tax_rate' => round($laborTaxRate, 2),
+                    'labor_tax_amount' => round($laborTaxAmount, 2),
                     'total' => $total,
                     'paid_amount' => $paidAmount,
                     'status' => $status,
@@ -700,28 +758,33 @@ class Invoice extends Model
                     'id' => $invoiceId,
                     'company_id' => $companyId,
                 ]
-            );
+	            );
 
-            if ($this->normalizeInvoiceType((string) ($existing['invoice_type'] ?? 'product')) === 'product') {
-                $this->releaseStockForItems($companyId, (string) ($existing['invoice_number'] ?? ''), $existing['items'] ?? [], $userId);
-            }
+	            if (
+	                $this->normalizeDocumentType((string) ($existing['document_type'] ?? 'invoice')) === 'invoice'
+	                && $this->normalizeInvoiceType((string) ($existing['invoice_type'] ?? 'product')) === 'product'
+	                && $this->hasStockReservation($existing)
+	            ) {
+	                $this->releaseStockForItems($companyId, (string) ($existing['invoice_number'] ?? ''), $existing['items'] ?? [], $userId);
+	            }
 
             $this->db->execute('DELETE FROM invoice_items WHERE invoice_id = :invoice_id', ['invoice_id' => $invoiceId]);
 
-            if ($invoiceType === 'product') {
-                $this->reserveStockForItems($companyId, $invoiceNumber, $items, $userId);
-            }
+	            if ($documentType === 'invoice' && $invoiceType === 'product' && $status !== 'draft') {
+	                $this->reserveStockForItems($companyId, $invoiceNumber, $items, $userId);
+	            }
 
             foreach ($items as $item) {
                 $this->db->execute(
-                    'INSERT INTO invoice_items (invoice_id, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total)
-                     VALUES (:invoice_id, :product_id, :description, :quantity, :unit_code, :factor_to_base, :quantity_base, :stock_movement_id, :cogs_amount, :margin_amount, :unit_price, :tax_rate, :subtotal, :tax_amount, :total)',
-                    [
-                        'invoice_id' => $invoiceId,
-                        'product_id' => $item['product_id'],
-                        'description' => $item['description'],
-                        'quantity' => $item['quantity'],
-                        'unit_code' => $item['unit_code'],
+	                    'INSERT INTO invoice_items (invoice_id, line_kind, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total)
+	                     VALUES (:invoice_id, :line_kind, :product_id, :description, :quantity, :unit_code, :factor_to_base, :quantity_base, :stock_movement_id, :cogs_amount, :margin_amount, :unit_price, :tax_rate, :subtotal, :tax_amount, :total)',
+	                    [
+	                        'invoice_id' => $invoiceId,
+	                        'line_kind' => (string) ($item['line_kind'] ?? 'standard'),
+	                        'product_id' => $item['product_id'],
+	                        'description' => $item['description'],
+	                        'quantity' => $item['quantity'],
+	                        'unit_code' => $item['unit_code'],
                         'factor_to_base' => $item['factor_to_base'],
                         'quantity_base' => $item['quantity_base'],
                         'stock_movement_id' => $item['stock_movement_id'] ?? null,
@@ -749,10 +812,14 @@ class Invoice extends Model
         return true;
     }
 
-    public function markSent(int $companyId, int $invoiceId): bool
+    public function markSent(int $companyId, int $invoiceId, int $userId): bool
     {
         $invoice = $this->findByIdForCompany($companyId, $invoiceId);
         if ($invoice === null || (string) ($invoice['status'] ?? '') !== 'draft') {
+            return false;
+        }
+
+        if ($this->normalizeDocumentType((string) ($invoice['document_type'] ?? 'invoice')) !== 'invoice') {
             return false;
         }
 
@@ -760,22 +827,170 @@ class Invoice extends Model
         $total = round((float) ($invoice['total'] ?? 0), 2);
         $newStatus = $paidAmount >= ($total - 0.009) ? 'paid' : 'sent';
 
-        $this->db->execute(
-            'UPDATE invoices
-             SET status = :status,
-                 paid_date = CASE WHEN :status_paid = :status THEN CURRENT_DATE ELSE paid_date END
-             WHERE id = :id
-               AND company_id = :company_id',
-            [
-                'status' => $newStatus,
-                'status_paid' => 'paid',
-                'id' => $invoiceId,
-                'company_id' => $companyId,
-            ]
-        );
+        $this->db->beginTransaction();
+        try {
+            $items = is_array($invoice['items'] ?? null) ? $invoice['items'] : [];
+            if (
+                $this->normalizeInvoiceType((string) ($invoice['invoice_type'] ?? 'product')) === 'product'
+                && !$this->hasStockReservation($invoice)
+            ) {
+                $invoiceNumber = (string) ($invoice['invoice_number'] ?? '');
+                $this->reserveStockForItems($companyId, $invoiceNumber, $items, $userId);
+                foreach ($items as $item) {
+                    $itemId = (int) ($item['id'] ?? 0);
+                    if ($itemId <= 0) {
+                        continue;
+                    }
+                    $this->db->execute(
+                        'UPDATE invoice_items
+                         SET stock_movement_id = :stock_movement_id,
+                             cogs_amount = :cogs_amount,
+                             margin_amount = :margin_amount
+                         WHERE id = :id AND invoice_id = :invoice_id',
+                        [
+                            'stock_movement_id' => (int) ($item['stock_movement_id'] ?? 0) ?: null,
+                            'cogs_amount' => round((float) ($item['cogs_amount'] ?? 0), 2),
+                            'margin_amount' => round((float) ($item['margin_amount'] ?? 0), 2),
+                            'id' => $itemId,
+                            'invoice_id' => $invoiceId,
+                        ]
+                    );
+                }
+            }
+
+            $this->db->execute(
+                'UPDATE invoices
+                 SET status = :status,
+                     paid_date = CASE WHEN :status_paid = :status THEN CURRENT_DATE ELSE paid_date END
+                 WHERE id = :id
+                   AND company_id = :company_id',
+                [
+                    'status' => $newStatus,
+                    'status_paid' => 'paid',
+                    'id' => $invoiceId,
+                    'company_id' => $companyId,
+                ]
+            );
+            $this->db->commit();
+        } catch (\Throwable $exception) {
+            $this->db->rollback();
+            throw $exception;
+        }
 
         $updated = $this->findByIdForCompany($companyId, $invoiceId);
         $this->appendInvoiceHistory($companyId, $invoiceId, 'sent', $invoice, $updated);
+
+        return true;
+    }
+
+    public function convertProformaToPaidInvoice(int $companyId, int $invoiceId, int $userId): bool
+    {
+        $invoice = $this->findByIdForCompany($companyId, $invoiceId);
+        if ($invoice === null) {
+            return false;
+        }
+
+        if ((string) ($invoice['status'] ?? '') !== 'draft') {
+            return false;
+        }
+
+        if ($this->normalizeDocumentType((string) ($invoice['document_type'] ?? 'invoice')) !== 'proforma') {
+            return false;
+        }
+
+        $invoiceDate = $this->normalizeDate((string) ($invoice['invoice_date'] ?? '')) ?? date('Y-m-d');
+        $newInvoiceNumber = $this->generateNextNumber($companyId, 'invoice');
+        if ($newInvoiceNumber === '') {
+            throw new \RuntimeException('Numero facture indisponible.');
+        }
+        $duplicate = $this->db->fetchOne(
+            'SELECT id
+             FROM invoices
+             WHERE company_id = :company_id
+               AND invoice_number = :invoice_number
+               AND id <> :id
+             LIMIT 1',
+            [
+                'company_id' => $companyId,
+                'invoice_number' => $newInvoiceNumber,
+                'id' => $invoiceId,
+            ]
+        );
+        if ($duplicate !== null) {
+            throw new \InvalidArgumentException('Ce numero facture existe deja.');
+        }
+
+        $items = is_array($invoice['items'] ?? null) ? $invoice['items'] : [];
+        $invoiceType = $this->normalizeInvoiceType((string) ($invoice['invoice_type'] ?? 'product'));
+        $total = round((float) ($invoice['total'] ?? 0), 2);
+        if ($total <= 0) {
+            throw new \InvalidArgumentException('Facture invalide (total <= 0).');
+        }
+
+        $this->assertStockAvailabilityForItems($companyId, $items, $invoiceType);
+
+        $fiscalPeriodId = (new FiscalPeriod($this->db))->resolvePeriodIdForDate($companyId, $invoiceDate);
+
+        $this->db->beginTransaction();
+        try {
+            $this->db->execute(
+                'UPDATE invoices
+                 SET document_type = :document_type,
+                     invoice_number = :invoice_number,
+                     status = :status,
+                     paid_amount = :paid_amount,
+                     paid_date = :paid_date,
+                     due_date = :due_date,
+                     fiscal_period_id = :fiscal_period_id
+                 WHERE id = :id
+                   AND company_id = :company_id',
+                [
+                    'document_type' => 'invoice',
+                    'invoice_number' => $newInvoiceNumber,
+                    'status' => 'paid',
+                    'paid_amount' => $total,
+                    'paid_date' => $invoiceDate,
+                    'due_date' => $invoiceDate,
+                    'fiscal_period_id' => $fiscalPeriodId,
+                    'id' => $invoiceId,
+                    'company_id' => $companyId,
+                ]
+            );
+
+            if ($invoiceType === 'product' && !$this->hasStockReservation($invoice)) {
+                $this->reserveStockForItems($companyId, $newInvoiceNumber, $items, $userId);
+                foreach ($items as $item) {
+                    $itemId = (int) ($item['id'] ?? 0);
+                    if ($itemId <= 0) {
+                        continue;
+                    }
+                    $this->db->execute(
+                        'UPDATE invoice_items
+                         SET stock_movement_id = :stock_movement_id,
+                             cogs_amount = :cogs_amount,
+                             margin_amount = :margin_amount
+                         WHERE id = :id AND invoice_id = :invoice_id',
+                        [
+                            'stock_movement_id' => (int) ($item['stock_movement_id'] ?? 0) ?: null,
+                            'cogs_amount' => round((float) ($item['cogs_amount'] ?? 0), 2),
+                            'margin_amount' => round((float) ($item['margin_amount'] ?? 0), 2),
+                            'id' => $itemId,
+                            'invoice_id' => $invoiceId,
+                        ]
+                    );
+                }
+            }
+
+            $this->db->commit();
+        } catch (\Throwable $exception) {
+            $this->db->rollback();
+            throw $exception;
+        }
+
+        $converted = $this->findByIdForCompany($companyId, $invoiceId);
+        $this->appendInvoiceHistory($companyId, $invoiceId, 'proforma_converted', $invoice, $converted, [
+            'new_invoice_number' => $newInvoiceNumber,
+        ]);
 
         return true;
     }
@@ -793,11 +1008,74 @@ class Invoice extends Model
         }
 
         $previousPaidAmount = round((float) ($invoice['paid_amount'] ?? 0), 2);
+        $cancellationDate = date('Y-m-d');
+        $invoiceNumber = (string) ($invoice['invoice_number'] ?? '');
+        $allocations = $this->db->fetchAll(
+            'SELECT transaction_id, COALESCE(SUM(amount), 0) AS amount
+             FROM invoice_payment_allocations
+             WHERE company_id = :company_id
+               AND invoice_id = :invoice_id
+             GROUP BY transaction_id',
+            [
+                'company_id' => $companyId,
+                'invoice_id' => $invoiceId,
+            ]
+        );
+
         $this->db->beginTransaction();
         try {
-            if ($this->normalizeInvoiceType((string) ($invoice['invoice_type'] ?? 'product')) === 'product') {
-                $this->releaseStockForItems($companyId, (string) ($invoice['invoice_number'] ?? ''), $invoice['items'] ?? [], $userId);
+            foreach ($allocations as $allocation) {
+                $transactionId = (int) ($allocation['transaction_id'] ?? 0);
+                $refundAmount = round((float) ($allocation['amount'] ?? 0), 2);
+                if ($transactionId <= 0 || $refundAmount <= 0) {
+                    continue;
+                }
+
+                $sharedRow = $this->db->fetchOne(
+                    'SELECT COUNT(DISTINCT invoice_id) AS invoice_count
+                     FROM invoice_payment_allocations
+                     WHERE company_id = :company_id
+                       AND transaction_id = :transaction_id',
+                    [
+                        'company_id' => $companyId,
+                        'transaction_id' => $transactionId,
+                    ]
+                );
+                $invoiceCount = (int) ($sharedRow['invoice_count'] ?? 0);
+                if ($invoiceCount <= 1) {
+                    $this->db->execute(
+                        'UPDATE transactions
+                         SET status = :status
+                         WHERE id = :id
+                           AND company_id = :company_id',
+                        [
+                            'status' => 'void',
+                            'id' => $transactionId,
+                            'company_id' => $companyId,
+                        ]
+                    );
+                    continue;
+                }
+
+                (new Transaction($this->db))->createManual($companyId, $userId, [
+                    'transaction_date' => $cancellationDate,
+                    'description' => 'Remboursement annulation facture ' . $invoiceNumber,
+                    'type' => 'expense',
+                    'status' => 'posted',
+                    'amount' => $refundAmount,
+                    'expense_subcategory' => 'other',
+                    'expense_subcategory_other' => 'Annulation facture ' . $invoiceNumber,
+                    'account_id' => 0,
+                ]);
             }
+
+		            if (
+		                $this->normalizeDocumentType((string) ($invoice['document_type'] ?? 'invoice')) === 'invoice'
+		                && $this->normalizeInvoiceType((string) ($invoice['invoice_type'] ?? 'product')) === 'product'
+		                && $this->hasStockReservation($invoice)
+		            ) {
+		                $this->releaseStockForItems($companyId, (string) ($invoice['invoice_number'] ?? ''), $invoice['items'] ?? [], $userId);
+		            }
 
             $this->db->execute(
                 'UPDATE invoices
@@ -841,11 +1119,16 @@ class Invoice extends Model
             return false;
         }
 
-        $this->db->beginTransaction();
-        try {
-            if ($status === 'draft' && $this->normalizeInvoiceType((string) ($invoice['invoice_type'] ?? 'product')) === 'product') {
-                $this->releaseStockForItems($companyId, (string) ($invoice['invoice_number'] ?? ''), $invoice['items'] ?? [], $userId);
-            }
+	        $this->db->beginTransaction();
+	        try {
+	            if (
+	                $status === 'draft'
+	                && $this->normalizeDocumentType((string) ($invoice['document_type'] ?? 'invoice')) === 'invoice'
+	                && $this->normalizeInvoiceType((string) ($invoice['invoice_type'] ?? 'product')) === 'product'
+	                && $this->hasStockReservation($invoice)
+	            ) {
+	                $this->releaseStockForItems($companyId, (string) ($invoice['invoice_number'] ?? ''), $invoice['items'] ?? [], $userId);
+	            }
 
             $this->db->execute(
                 'DELETE FROM invoices
@@ -872,6 +1155,10 @@ class Invoice extends Model
             return false;
         }
 
+        if ($this->normalizeDocumentType((string) ($invoice['document_type'] ?? 'invoice')) !== 'invoice') {
+            return false;
+        }
+
         $status = (string) ($invoice['status'] ?? '');
         if (!in_array($status, ['sent', 'overdue', 'paid'], true)) {
             return false;
@@ -885,7 +1172,12 @@ class Invoice extends Model
         $currentPaid = round((float) ($invoice['paid_amount'] ?? 0), 2);
         $total = round((float) ($invoice['total'] ?? 0), 2);
         $newPaid = round(min($total, $currentPaid + $amount), 2);
-        $newStatus = ($newPaid + 0.0001) >= $total ? 'paid' : 'sent';
+        $isFullyPaid = ($newPaid + 0.0001) >= $total;
+        if ($isFullyPaid) {
+            $newStatus = 'paid';
+        } else {
+            $newStatus = $status === 'overdue' ? 'overdue' : 'sent';
+        }
 
         $normalizedPaymentDate = $this->normalizeDate((string) ($paymentDate ?? '')) ?? date('Y-m-d');
 
@@ -930,20 +1222,35 @@ class Invoice extends Model
         return true;
     }
 
-    public function generateNextNumber(int $companyId): string
+    public function generateNextNumber(int $companyId, string $documentType = 'invoice'): string
     {
+        $documentType = $this->normalizeDocumentType($documentType);
+        $prefix = $documentType === 'proforma' ? 'PF' : 'INV';
+        $year = date('Y');
+        $numberPrefix = sprintf('%s-%s-', $prefix, $year);
+
         $row = $this->db->fetchOne(
-            'SELECT id
+            'SELECT invoice_number
              FROM invoices
              WHERE company_id = :company_id
-             ORDER BY id DESC
+               AND invoice_number LIKE :invoice_like
+             ORDER BY invoice_number DESC
              LIMIT 1',
-            ['company_id' => $companyId]
+            [
+                'company_id' => $companyId,
+                'invoice_like' => $numberPrefix . '%',
+            ]
         );
 
-        $nextSequence = ((int) ($row['id'] ?? 0)) + 1;
+        $lastNumber = trim((string) ($row['invoice_number'] ?? ''));
+        $lastSeq = 0;
+        if ($lastNumber !== '' && preg_match('/^' . preg_quote($numberPrefix, '/') . '(\\d+)$/', $lastNumber, $matches) === 1) {
+            $lastSeq = (int) $matches[1];
+        }
 
-        return sprintf('INV-%s-%04d', date('Y'), $nextSequence);
+        $nextSeq = $lastSeq + 1;
+        $width = max(4, strlen((string) $nextSeq));
+        return $numberPrefix . str_pad((string) $nextSeq, $width, '0', STR_PAD_LEFT);
     }
 
     public function createFromPayload(int $companyId, int $userId, array $payload): int
@@ -951,10 +1258,15 @@ class Invoice extends Model
         $invoiceDate = $this->normalizeDate((string) ($payload['issue_date'] ?? ''));
         $dueDate = $this->normalizeDate((string) ($payload['due_date'] ?? ''));
         [$customerName, $customerPhone, $customerTaxId, $customerAddress, $clientType] = $this->resolveClientFromPayload($payload);
+        $customerDescription = trim((string) ($payload['client_description'] ?? ''));
+        if ($clientType === 'anonymous') {
+            $customerDescription = '';
+        }
         $requestedStatus = $this->normalizeStatus((string) ($payload['status'] ?? 'sent'));
         $status = $requestedStatus;
         $invoiceType = $this->normalizeInvoiceType((string) ($payload['invoice_type'] ?? 'product'));
-        $invoiceNumber = $this->generateNextNumber($companyId);
+        $documentType = $this->normalizeDocumentType((string) ($payload['document_type'] ?? 'invoice'));
+        $invoiceNumber = $this->generateNextNumber($companyId, $documentType);
 
 
         if ($invoiceNumber === '' || $invoiceDate === null || $dueDate === null || $customerName === '') {
@@ -967,8 +1279,13 @@ class Invoice extends Model
 
         $parsed = $this->parseInvoiceItemsFromPayload($companyId, $payload, $invoiceType);
         $items = $parsed['items'];
-        $subtotal = (float) $parsed['subtotal'];
-        $taxAmount = (float) $parsed['tax_amount'];
+        $labor = $this->parseLaborFromPayload($payload);
+        $laborAmount = (float) $labor['amount'];
+        $laborTaxRate = (float) $labor['tax_rate'];
+        $laborTaxAmount = (float) $labor['tax_amount'];
+
+        $subtotal = (float) $parsed['subtotal'] + $laborAmount;
+        $taxAmount = (float) $parsed['tax_amount'] + $laborTaxAmount;
         $this->assertStockAvailabilityForItems($companyId, $items, $invoiceType);
 
         $discountType = trim((string) ($payload['discount_type'] ?? 'percent'));
@@ -984,7 +1301,11 @@ class Invoice extends Model
         $total = round($gross - $discount, 2);
         $deposit = max(0, round((float) ($payload['deposit_value'] ?? 0), 2));
         $paidAmount = min($deposit, $total);
-        if ($clientType === 'anonymous') {
+        if ($documentType === 'proforma') {
+            $paidAmount = 0.0;
+            $deposit = 0.0;
+            $status = 'draft';
+        } elseif ($clientType === 'anonymous') {
             $paidAmount = $total;
             $deposit = $total;
             $status = 'paid';
@@ -996,7 +1317,7 @@ class Invoice extends Model
             $status = $paidAmount >= ($total - 0.009) ? 'paid' : 'sent';
         }
         $remaining = max($total - $paidAmount, 0);
-        if ($clientType === 'anonymous' || $status === 'paid' || $remaining <= 0.009) {
+        if ($documentType !== 'proforma' && ($clientType === 'anonymous' || $status === 'paid' || $remaining <= 0.009)) {
             $dueDate = $invoiceDate;
         }
 
@@ -1026,10 +1347,11 @@ class Invoice extends Model
 
         try {
             $this->db->execute(
-                'INSERT INTO invoices (company_id, invoice_number, invoice_date, due_date, customer_name, customer_phone, customer_tax_id, customer_address, subtotal, tax_rate, tax_amount, total, paid_amount, status, invoice_type, issuer_company_name, issuer_logo_url, issuer_brand_color, fiscal_period_id, notes, created_by)
-                 VALUES (:company_id, :invoice_number, :invoice_date, :due_date, :customer_name, :customer_phone, :customer_tax_id, :customer_address, :subtotal, :tax_rate, :tax_amount, :total, :paid_amount, :status, :invoice_type, :issuer_company_name, :issuer_logo_url, :issuer_brand_color, :fiscal_period_id, :notes, :created_by)',
+                'INSERT INTO invoices (company_id, document_type, invoice_number, invoice_date, due_date, customer_name, customer_phone, customer_tax_id, customer_address, customer_description, subtotal, tax_rate, tax_amount, labor_amount, labor_tax_rate, labor_tax_amount, total, paid_amount, status, invoice_type, issuer_company_name, issuer_logo_url, issuer_brand_color, fiscal_period_id, notes, created_by)
+                 VALUES (:company_id, :document_type, :invoice_number, :invoice_date, :due_date, :customer_name, :customer_phone, :customer_tax_id, :customer_address, :customer_description, :subtotal, :tax_rate, :tax_amount, :labor_amount, :labor_tax_rate, :labor_tax_amount, :total, :paid_amount, :status, :invoice_type, :issuer_company_name, :issuer_logo_url, :issuer_brand_color, :fiscal_period_id, :notes, :created_by)',
                 [
                     'company_id' => $companyId,
+                    'document_type' => $documentType,
                     'invoice_number' => $invoiceNumber,
                     'invoice_date' => $invoiceDate,
                     'due_date' => $dueDate,
@@ -1037,9 +1359,13 @@ class Invoice extends Model
                     'customer_phone' => $customerPhone !== '' ? $customerPhone : null,
                     'customer_tax_id' => $customerTaxId !== '' ? $customerTaxId : null,
                     'customer_address' => $customerAddress !== '' ? $customerAddress : null,
+                    'customer_description' => $customerDescription !== '' ? $customerDescription : null,
                     'subtotal' => round($subtotal, 2),
                     'tax_rate' => $averageTaxRate,
                     'tax_amount' => round($taxAmount, 2),
+                    'labor_amount' => round($laborAmount, 2),
+                    'labor_tax_rate' => round($laborTaxRate, 2),
+                    'labor_tax_amount' => round($laborTaxAmount, 2),
                     'total' => $total,
                     'paid_amount' => $paidAmount,
                     'status' => $status,
@@ -1055,20 +1381,21 @@ class Invoice extends Model
 
             $invoiceId = $this->db->lastInsertId();
 
-            if ($invoiceType === 'product') {
-                $this->reserveStockForItems($companyId, $invoiceNumber, $items, $userId);
-            }
+	            if ($documentType === 'invoice' && $invoiceType === 'product' && $status !== 'draft') {
+	                $this->reserveStockForItems($companyId, $invoiceNumber, $items, $userId);
+	            }
 
             foreach ($items as $item) {
                 $this->db->execute(
-                    'INSERT INTO invoice_items (invoice_id, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total)
-                     VALUES (:invoice_id, :product_id, :description, :quantity, :unit_code, :factor_to_base, :quantity_base, :stock_movement_id, :cogs_amount, :margin_amount, :unit_price, :tax_rate, :subtotal, :tax_amount, :total)',
-                    [
-                        'invoice_id' => $invoiceId,
-                        'product_id' => $item['product_id'],
-                        'description' => $item['description'],
-                        'quantity' => $item['quantity'],
-                        'unit_code' => $item['unit_code'],
+	                    'INSERT INTO invoice_items (invoice_id, line_kind, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total)
+	                     VALUES (:invoice_id, :line_kind, :product_id, :description, :quantity, :unit_code, :factor_to_base, :quantity_base, :stock_movement_id, :cogs_amount, :margin_amount, :unit_price, :tax_rate, :subtotal, :tax_amount, :total)',
+	                    [
+	                        'invoice_id' => $invoiceId,
+	                        'line_kind' => (string) ($item['line_kind'] ?? 'standard'),
+	                        'product_id' => $item['product_id'],
+	                        'description' => $item['description'],
+	                        'quantity' => $item['quantity'],
+	                        'unit_code' => $item['unit_code'],
                         'factor_to_base' => $item['factor_to_base'],
                         'quantity_base' => $item['quantity_base'],
                         'stock_movement_id' => $item['stock_movement_id'] ?? null,
@@ -1112,13 +1439,13 @@ class Invoice extends Model
             $params[$key] = $id;
         }
 
-        $rows = $this->db->fetchAll(
-            'SELECT id, invoice_number, invoice_date, due_date, customer_name, customer_phone, customer_tax_id, customer_address, paid_amount, status, invoice_type, notes
-             FROM invoices
-             WHERE company_id = :company_id
-               AND id IN (' . implode(', ', $placeholders) . ')',
-            $params
-        );
+	        $rows = $this->db->fetchAll(
+	            'SELECT id, document_type, invoice_number, invoice_date, due_date, customer_name, customer_phone, customer_tax_id, customer_address, customer_description, paid_amount, status, invoice_type, labor_amount, labor_tax_rate, labor_tax_amount, notes
+	             FROM invoices
+	             WHERE company_id = :company_id
+	               AND id IN (' . implode(', ', $placeholders) . ')',
+	            $params
+	        );
 
         if (count($rows) !== count($ids)) {
             throw new \InvalidArgumentException('Factures introuvables.');
@@ -1135,13 +1462,13 @@ class Invoice extends Model
             if (!in_array($rowStatus, ['draft', 'sent', 'overdue', 'paid'], true)) {
                 throw new \InvalidArgumentException('Factures non eligibles a la fusion.');
             }
-            $row['items'] = $this->db->fetchAll(
-                'SELECT product_id, description, quantity, unit_code, factor_to_base, quantity_base, unit_price, tax_rate, subtotal, tax_amount, total
-                 FROM invoice_items
-                 WHERE invoice_id = :invoice_id
-                 ORDER BY id ASC',
-                ['invoice_id' => $invoiceId]
-            );
+	            $row['items'] = $this->db->fetchAll(
+	                'SELECT line_kind, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, unit_price, tax_rate, subtotal, tax_amount, total
+	                 FROM invoice_items
+	                 WHERE invoice_id = :invoice_id
+	                 ORDER BY id ASC',
+	                ['invoice_id' => $invoiceId]
+	            );
             $invoicesById[$invoiceId] = $row;
         }
 
@@ -1157,15 +1484,20 @@ class Invoice extends Model
         }
 
         $invoiceType = 'service';
-        $customerName = trim((string) ($sorted[0]['customer_name'] ?? ''));
-        $customerPhone = trim((string) ($sorted[0]['customer_phone'] ?? ''));
-        $customerTaxId = trim((string) ($sorted[0]['customer_tax_id'] ?? ''));
-        $customerAddress = trim((string) ($sorted[0]['customer_address'] ?? ''));
-        $sameCustomer = true;
+        $documentType = 'proforma';
+	        $customerName = trim((string) ($sorted[0]['customer_name'] ?? ''));
+	        $customerPhone = trim((string) ($sorted[0]['customer_phone'] ?? ''));
+	        $customerTaxId = trim((string) ($sorted[0]['customer_tax_id'] ?? ''));
+	        $customerAddress = trim((string) ($sorted[0]['customer_address'] ?? ''));
+	        $customerDescription = trim((string) ($sorted[0]['customer_description'] ?? ''));
+	        $sameCustomer = true;
         $minInvoiceDate = (string) ($sorted[0]['invoice_date'] ?? date('Y-m-d'));
         $maxDueDate = (string) ($sorted[0]['due_date'] ?? date('Y-m-d'));
 
         foreach ($sorted as $row) {
+            if ($this->normalizeDocumentType((string) ($row['document_type'] ?? 'invoice')) !== 'proforma') {
+                $documentType = 'invoice';
+            }
             if ($this->normalizeInvoiceType((string) ($row['invoice_type'] ?? 'product')) === 'product') {
                 $invoiceType = 'product';
             }
@@ -1184,12 +1516,13 @@ class Invoice extends Model
             }
         }
 
-        if (!$sameCustomer) {
-            $customerName = 'Clients multiples';
-            $customerPhone = '';
-            $customerTaxId = '';
-            $customerAddress = '';
-        }
+	        if (!$sameCustomer) {
+	            $customerName = 'Clients multiples';
+	            $customerPhone = '';
+	            $customerTaxId = '';
+	            $customerAddress = '';
+	            $customerDescription = '';
+	        }
 
         $mergedItems = [];
         foreach ($sorted as $row) {
@@ -1209,12 +1542,17 @@ class Invoice extends Model
                     number_format($factor, 6, '.', ''),
                 ]);
 
-                if (!isset($mergedItems[$key])) {
-                    $mergedItems[$key] = [
-                        'product_id' => $productId > 0 ? $productId : null,
-                        'description' => $description,
-                        'quantity' => 0.0,
-                        'unit_code' => $unitCode !== '' ? $unitCode : null,
+	                if (!isset($mergedItems[$key])) {
+	                    $lineKind = strtolower(trim((string) ($item['line_kind'] ?? 'standard')));
+	                    if ($lineKind !== 'other') {
+	                        $lineKind = 'standard';
+	                    }
+	                    $mergedItems[$key] = [
+	                        'line_kind' => $lineKind,
+	                        'product_id' => $productId > 0 ? $productId : null,
+	                        'description' => $description,
+	                        'quantity' => 0.0,
+	                        'unit_code' => $unitCode !== '' ? $unitCode : null,
                         'factor_to_base' => $factor > 0 ? $factor : 1.0,
                         'quantity_base' => 0.0,
                         'stock_movement_id' => null,
@@ -1243,11 +1581,18 @@ class Invoice extends Model
         $this->assertStockAvailabilityForItems($companyId, $items, $invoiceType);
         $subtotal = 0.0;
         $taxAmount = 0.0;
+        $mergedLaborAmount = 0.0;
+        $mergedLaborTaxAmount = 0.0;
         $mergedPaidAmount = 0.0;
         foreach ($sorted as $row) {
             $mergedPaidAmount += (float) ($row['paid_amount'] ?? 0);
+            $mergedLaborAmount += (float) ($row['labor_amount'] ?? 0);
+            $mergedLaborTaxAmount += (float) ($row['labor_tax_amount'] ?? 0);
         }
         $mergedPaidAmount = round(max(0, $mergedPaidAmount), 2);
+        $mergedLaborAmount = round(max(0, $mergedLaborAmount), 2);
+        $mergedLaborTaxAmount = round(max(0, $mergedLaborTaxAmount), 2);
+        $mergedLaborTaxRate = $mergedLaborAmount > 0 ? round(($mergedLaborTaxAmount / $mergedLaborAmount) * 100, 2) : 0.0;
         foreach ($items as $index => $item) {
             $lineSubtotal = round((float) ($item['quantity'] ?? 0) * (float) ($item['unit_price'] ?? 0), 2);
             $lineTax = round($lineSubtotal * ((float) ($item['tax_rate'] ?? 0) / 100), 2);
@@ -1260,28 +1605,36 @@ class Invoice extends Model
             $items[$index]['margin_amount'] = $lineSubtotal;
         }
 
-        $subtotal = round($subtotal, 2);
-        $taxAmount = round($taxAmount, 2);
+        $subtotal = round($subtotal + $mergedLaborAmount, 2);
+        $taxAmount = round($taxAmount + $mergedLaborTaxAmount, 2);
         $total = round($subtotal + $taxAmount, 2);
-        $mergedPaidAmount = min($mergedPaidAmount, $total);
+        if ($documentType === 'proforma') {
+            $mergedPaidAmount = 0.0;
+        } else {
+            $mergedPaidAmount = min($mergedPaidAmount, $total);
+        }
         $mergedStatus = 'draft';
-        if ($mergedPaidAmount > 0) {
+        if ($documentType !== 'proforma' && $mergedPaidAmount > 0) {
             $mergedStatus = $mergedPaidAmount >= $total ? 'paid' : 'sent';
         }
         $averageTaxRate = $subtotal > 0 ? round(($taxAmount / $subtotal) * 100, 2) : 0.0;
         $fiscalPeriodId = (new FiscalPeriod($this->db))->resolvePeriodIdForDate($companyId, $minInvoiceDate);
         $issuer = $this->getIssuerSnapshot($companyId);
-        $invoiceNumber = $this->generateNextNumber($companyId);
+        $invoiceNumber = $this->generateNextNumber($companyId, $documentType);
         $sourceNumbers = array_map(static fn(array $row): string => (string) ($row['invoice_number'] ?? ''), $sorted);
         $notes = 'Fusion de factures: ' . implode(', ', $sourceNumbers);
 
         $mergedInvoiceId = 0;
         $this->db->beginTransaction();
         try {
-            foreach ($sorted as $row) {
-                if ($this->normalizeInvoiceType((string) ($row['invoice_type'] ?? 'product')) === 'product') {
-                    $this->releaseStockForItems($companyId, (string) ($row['invoice_number'] ?? ''), (array) ($row['items'] ?? []), $userId);
-                }
+	            foreach ($sorted as $row) {
+	                if (
+	                    $this->normalizeDocumentType((string) ($row['document_type'] ?? 'invoice')) === 'invoice'
+	                    && $this->normalizeInvoiceType((string) ($row['invoice_type'] ?? 'product')) === 'product'
+	                    && $this->hasStockReservation($row)
+	                ) {
+	                    $this->releaseStockForItems($companyId, (string) ($row['invoice_number'] ?? ''), (array) ($row['items'] ?? []), $userId);
+	                }
                 $this->db->execute(
                     'UPDATE invoices
                      SET status = :status
@@ -1295,21 +1648,26 @@ class Invoice extends Model
                 );
             }
 
-            $this->db->execute(
-                'INSERT INTO invoices (company_id, invoice_number, invoice_date, due_date, customer_name, customer_phone, customer_tax_id, customer_address, subtotal, tax_rate, tax_amount, total, paid_amount, status, invoice_type, issuer_company_name, issuer_logo_url, issuer_brand_color, fiscal_period_id, notes, created_by)
-                 VALUES (:company_id, :invoice_number, :invoice_date, :due_date, :customer_name, :customer_phone, :customer_tax_id, :customer_address, :subtotal, :tax_rate, :tax_amount, :total, :paid_amount, :status, :invoice_type, :issuer_company_name, :issuer_logo_url, :issuer_brand_color, :fiscal_period_id, :notes, :created_by)',
-                [
-                    'company_id' => $companyId,
-                    'invoice_number' => $invoiceNumber,
-                    'invoice_date' => $minInvoiceDate,
-                    'due_date' => $maxDueDate,
-                    'customer_name' => $customerName !== '' ? $customerName : 'Client',
-                    'customer_phone' => $customerPhone !== '' ? $customerPhone : null,
-                    'customer_tax_id' => $customerTaxId !== '' ? $customerTaxId : null,
-                    'customer_address' => $customerAddress !== '' ? $customerAddress : null,
-                    'subtotal' => $subtotal,
-                    'tax_rate' => $averageTaxRate,
-                    'tax_amount' => $taxAmount,
+	            $this->db->execute(
+	                'INSERT INTO invoices (company_id, document_type, invoice_number, invoice_date, due_date, customer_name, customer_phone, customer_tax_id, customer_address, customer_description, subtotal, tax_rate, tax_amount, labor_amount, labor_tax_rate, labor_tax_amount, total, paid_amount, status, invoice_type, issuer_company_name, issuer_logo_url, issuer_brand_color, fiscal_period_id, notes, created_by)
+	                 VALUES (:company_id, :document_type, :invoice_number, :invoice_date, :due_date, :customer_name, :customer_phone, :customer_tax_id, :customer_address, :customer_description, :subtotal, :tax_rate, :tax_amount, :labor_amount, :labor_tax_rate, :labor_tax_amount, :total, :paid_amount, :status, :invoice_type, :issuer_company_name, :issuer_logo_url, :issuer_brand_color, :fiscal_period_id, :notes, :created_by)',
+	                [
+	                    'company_id' => $companyId,
+	                    'document_type' => $documentType,
+	                    'invoice_number' => $invoiceNumber,
+	                    'invoice_date' => $minInvoiceDate,
+	                    'due_date' => $maxDueDate,
+	                    'customer_name' => $customerName !== '' ? $customerName : 'Client',
+	                    'customer_phone' => $customerPhone !== '' ? $customerPhone : null,
+	                    'customer_tax_id' => $customerTaxId !== '' ? $customerTaxId : null,
+	                    'customer_address' => $customerAddress !== '' ? $customerAddress : null,
+	                    'customer_description' => $customerDescription !== '' ? $customerDescription : null,
+	                    'subtotal' => $subtotal,
+	                    'tax_rate' => $averageTaxRate,
+	                    'tax_amount' => $taxAmount,
+	                    'labor_amount' => $mergedLaborAmount,
+                    'labor_tax_rate' => $mergedLaborTaxRate,
+                    'labor_tax_amount' => $mergedLaborTaxAmount,
                     'total' => $total,
                     'paid_amount' => $mergedPaidAmount,
                     'status' => $mergedStatus,
@@ -1325,20 +1683,21 @@ class Invoice extends Model
 
             $mergedInvoiceId = $this->db->lastInsertId();
 
-            if ($invoiceType === 'product') {
-                $this->reserveStockForItems($companyId, $invoiceNumber, $items, $userId);
-            }
+	            if ($documentType === 'invoice' && $invoiceType === 'product' && $mergedStatus !== 'draft') {
+	                $this->reserveStockForItems($companyId, $invoiceNumber, $items, $userId);
+	            }
 
             foreach ($items as $item) {
                 $this->db->execute(
-                    'INSERT INTO invoice_items (invoice_id, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total)
-                     VALUES (:invoice_id, :product_id, :description, :quantity, :unit_code, :factor_to_base, :quantity_base, :stock_movement_id, :cogs_amount, :margin_amount, :unit_price, :tax_rate, :subtotal, :tax_amount, :total)',
-                    [
-                        'invoice_id' => $mergedInvoiceId,
-                        'product_id' => $item['product_id'],
-                        'description' => $item['description'],
-                        'quantity' => $item['quantity'],
-                        'unit_code' => $item['unit_code'],
+	                    'INSERT INTO invoice_items (invoice_id, line_kind, product_id, description, quantity, unit_code, factor_to_base, quantity_base, stock_movement_id, cogs_amount, margin_amount, unit_price, tax_rate, subtotal, tax_amount, total)
+	                     VALUES (:invoice_id, :line_kind, :product_id, :description, :quantity, :unit_code, :factor_to_base, :quantity_base, :stock_movement_id, :cogs_amount, :margin_amount, :unit_price, :tax_rate, :subtotal, :tax_amount, :total)',
+	                    [
+	                        'invoice_id' => $mergedInvoiceId,
+	                        'line_kind' => (string) ($item['line_kind'] ?? 'standard'),
+	                        'product_id' => $item['product_id'],
+	                        'description' => $item['description'],
+	                        'quantity' => $item['quantity'],
+	                        'unit_code' => $item['unit_code'],
                         'factor_to_base' => $item['factor_to_base'],
                         'quantity_base' => $item['quantity_base'],
                         'stock_movement_id' => $item['stock_movement_id'] ?? null,
@@ -1407,6 +1766,20 @@ class Invoice extends Model
         return $map[$normalized] ?? 'sent';
     }
 
+    private function normalizeDocumentType(string $documentType): string
+    {
+        $normalized = strtolower(trim($documentType));
+        $map = [
+            'proforma' => 'proforma',
+            'pro-forma' => 'proforma',
+            'pf' => 'proforma',
+            'invoice' => 'invoice',
+            'facture' => 'invoice',
+        ];
+
+        return $map[$normalized] ?? 'invoice';
+    }
+
     private function normalizeInvoiceType(string $invoiceType): string
     {
         $normalized = strtolower(trim($invoiceType));
@@ -1430,83 +1803,104 @@ class Invoice extends Model
         ];
     }
 
-    private function parseInvoiceItemsFromPayload(int $companyId, array $payload, string $invoiceType): array
-    {
-        $lineDescriptions = $payload['line_description'] ?? [];
-        $lineQty = $payload['line_qty'] ?? [];
-        $lineUnitCodes = $payload['line_unit_code'] ?? [];
-        $linePrices = $payload['line_price'] ?? [];
-        $lineTaxes = $payload['line_tax'] ?? [];
-        $lineProductIds = $payload['line_product_id'] ?? [];
+	    private function parseInvoiceItemsFromPayload(int $companyId, array $payload, string $invoiceType): array
+	    {
+	        $lineDescriptions = $payload['line_description'] ?? [];
+	        $lineQty = $payload['line_qty'] ?? [];
+	        $lineUnitCodes = $payload['line_unit_code'] ?? [];
+	        $linePrices = $payload['line_price'] ?? [];
+	        $lineTaxes = $payload['line_tax'] ?? [];
+	        $lineProductIds = $payload['line_product_id'] ?? [];
+	        $lineKinds = $payload['line_kind'] ?? [];
 
-        if (!is_array($lineDescriptions) || !is_array($lineQty) || !is_array($lineUnitCodes) || !is_array($linePrices) || !is_array($lineTaxes) || !is_array($lineProductIds)) {
-            throw new \InvalidArgumentException('Les lignes de facture sont invalides.');
-        }
+	        if (!is_array($lineDescriptions) || !is_array($lineQty) || !is_array($lineUnitCodes) || !is_array($linePrices) || !is_array($lineTaxes) || !is_array($lineProductIds) || (!is_array($lineKinds) && $lineKinds !== null)) {
+	            throw new \InvalidArgumentException('Les lignes de facture sont invalides.');
+	        }
 
-        $lineCount = count($lineQty);
-        if (
-            $lineCount === 0
-            || $lineCount !== count($lineDescriptions)
-            || $lineCount !== count($lineUnitCodes)
-            || $lineCount !== count($linePrices)
-            || $lineCount !== count($lineTaxes)
-            || $lineCount !== count($lineProductIds)
-        ) {
-            throw new \InvalidArgumentException('Les lignes de facture sont incompletes.');
-        }
+	        $lineCount = count($lineQty);
+	        if (!is_array($lineKinds) || $lineKinds === []) {
+	            $lineKinds = array_fill(0, $lineCount, 'standard');
+	        }
+	        if (
+	            $lineCount === 0
+	            || $lineCount !== count($lineDescriptions)
+	            || $lineCount !== count($lineUnitCodes)
+	            || $lineCount !== count($linePrices)
+	            || $lineCount !== count($lineTaxes)
+	            || $lineCount !== count($lineProductIds)
+	            || $lineCount !== count($lineKinds)
+	        ) {
+	            throw new \InvalidArgumentException('Les lignes de facture sont incompletes.');
+	        }
 
-        $catalog = [];
-        $unitMap = [];
-        if ($invoiceType === 'product') {
-            $requested = [];
-            for ($i = 0; $i < $lineCount; $i++) {
-                $productId = (int) ($lineProductIds[$i] ?? 0);
-                if ($productId <= 0) {
-                    throw new \InvalidArgumentException('Selectionnez un produit de stock pour chaque ligne.');
-                }
-                $requested[] = $productId;
-            }
-            $catalog = $this->loadProductsCatalog($companyId, $requested);
-            $unitMap = $this->loadProductUnitConversions($companyId, array_keys($catalog));
-        }
+	        $catalog = [];
+	        $unitMap = [];
+	        if ($invoiceType === 'product') {
+	            $requested = [];
+	            for ($i = 0; $i < $lineCount; $i++) {
+	                $kind = strtolower(trim((string) ($lineKinds[$i] ?? 'standard')));
+	                if ($kind === 'other') {
+	                    continue;
+	                }
+	                $productId = (int) ($lineProductIds[$i] ?? 0);
+	                if ($productId <= 0) {
+	                    throw new \InvalidArgumentException('Selectionnez un produit de stock pour chaque ligne.');
+	                }
+	                $requested[] = $productId;
+	            }
+	            $catalog = $this->loadProductsCatalog($companyId, $requested);
+	            $unitMap = $this->loadProductUnitConversions($companyId, array_keys($catalog));
+	        }
 
         $subtotal = 0.0;
         $taxAmount = 0.0;
         $items = [];
 
-        for ($i = 0; $i < $lineCount; $i++) {
-            $qty = round((float) $lineQty[$i], 6);
-            $price = round((float) $linePrices[$i], 2);
-            $taxRate = round((float) $lineTaxes[$i], 2);
-            $productId = null;
-            $description = trim((string) ($lineDescriptions[$i] ?? ''));
-            $unitCode = null;
-            $factorToBase = 1.0;
-            $quantityBase = null;
+	        for ($i = 0; $i < $lineCount; $i++) {
+	            $kind = strtolower(trim((string) ($lineKinds[$i] ?? 'standard')));
+	            $isOther = $kind === 'other';
+	            $qty = round((float) $lineQty[$i], 6);
+	            $price = round((float) $linePrices[$i], 2);
+	            $taxRate = round((float) $lineTaxes[$i], 2);
+	            $productId = null;
+	            $description = trim((string) ($lineDescriptions[$i] ?? ''));
+	            $unitCode = null;
+	            $factorToBase = 1.0;
+	            $quantityBase = null;
 
-            if ($invoiceType === 'product') {
-                $productId = (int) ($lineProductIds[$i] ?? 0);
-                $product = $catalog[$productId] ?? null;
-                if (!is_array($product)) {
-                    throw new \InvalidArgumentException('Un produit selectionne est introuvable en stock.');
-                }
-                $selectedUnitCode = strtolower(trim((string) ($lineUnitCodes[$i] ?? '')));
-                if ($selectedUnitCode === '') {
-                    $selectedUnitCode = strtolower(trim((string) ($product['unit'] ?? 'unite')));
-                }
-                $factorToBase = (float) ($unitMap[$productId][$selectedUnitCode] ?? 0);
-                if ($factorToBase <= 0) {
-                    throw new \InvalidArgumentException('Unite invalide pour le produit "' . (string) ($product['name'] ?? '') . '".');
-                }
-                $unitCode = $selectedUnitCode;
-                $quantityBase = round($qty * $factorToBase, 6);
-                $description = (string) ($product['name'] ?? '');
-                $purchaseBase = round((float) ($product['purchase_price'] ?? 0), 6);
-            }
+	            if ($invoiceType === 'product') {
+	                if (!$isOther) {
+	                    $productId = (int) ($lineProductIds[$i] ?? 0);
+	                    if ($productId <= 0) {
+	                        throw new \InvalidArgumentException('Selectionnez un produit de stock pour chaque ligne.');
+	                    }
+	                    $product = $catalog[$productId] ?? null;
+	                    if (!is_array($product)) {
+	                        throw new \InvalidArgumentException('Un produit selectionne est introuvable en stock.');
+	                    }
+	                    $selectedUnitCode = strtolower(trim((string) ($lineUnitCodes[$i] ?? '')));
+	                    if ($selectedUnitCode === '') {
+	                        $selectedUnitCode = strtolower(trim((string) ($product['unit'] ?? 'unite')));
+	                    }
+	                    $factorToBase = (float) ($unitMap[$productId][$selectedUnitCode] ?? 0);
+	                    if ($factorToBase <= 0) {
+	                        throw new \InvalidArgumentException('Unite invalide pour le produit "' . (string) ($product['name'] ?? '') . '".');
+	                    }
+	                    $unitCode = $selectedUnitCode;
+	                    $quantityBase = round($qty * $factorToBase, 6);
+	                    $description = (string) ($product['name'] ?? '');
+	                    $purchaseBase = round((float) ($product['purchase_price'] ?? 0), 6);
+	                } else {
+	                    $productId = null;
+	                    $unitCode = null;
+	                    $factorToBase = 1.0;
+	                    $quantityBase = null;
+	                }
+	            }
 
-            if ($description === '' || $qty <= 0 || $price < 0 || $taxRate < 0) {
-                throw new \InvalidArgumentException('Une ligne de facture contient des valeurs invalides.');
-            }
+	            if ($description === '' || $qty <= 0 || $price < 0 || $taxRate < 0) {
+	                throw new \InvalidArgumentException('Une ligne de facture contient des valeurs invalides.');
+	            }
 
             $lineSubtotal = $qty * $price;
             $lineTaxAmount = $lineSubtotal * ($taxRate / 100);
@@ -1514,12 +1908,13 @@ class Invoice extends Model
             $subtotal += $lineSubtotal;
             $taxAmount += $lineTaxAmount;
 
-            $items[] = [
-                'product_id' => $productId,
-                'description' => $description,
-                'quantity' => $qty,
-                'unit_code' => $unitCode,
-                'factor_to_base' => round($factorToBase, 6),
+	            $items[] = [
+	                'line_kind' => $isOther ? 'other' : 'standard',
+	                'product_id' => $productId,
+	                'description' => $description,
+	                'quantity' => $qty,
+	                'unit_code' => $unitCode,
+	                'factor_to_base' => round($factorToBase, 6),
                 'quantity_base' => $quantityBase,
                 'stock_movement_id' => null,
                 'cogs_amount' => 0.0,
@@ -1536,6 +1931,24 @@ class Invoice extends Model
             'items' => $items,
             'subtotal' => round($subtotal, 2),
             'tax_amount' => round($taxAmount, 2),
+        ];
+    }
+
+    private function parseLaborFromPayload(array $payload): array
+    {
+        $amount = round((float) ($payload['labor_amount'] ?? 0), 2);
+        $taxRate = round((float) ($payload['labor_tax_rate'] ?? 0), 2);
+
+        if ($amount < 0 || $taxRate < 0) {
+            throw new \InvalidArgumentException('La main d’oeuvre est invalide.');
+        }
+
+        $taxAmount = round($amount * ($taxRate / 100), 2);
+
+        return [
+            'amount' => $amount,
+            'tax_rate' => $taxRate,
+            'tax_amount' => $taxAmount,
         ];
     }
 

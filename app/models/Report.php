@@ -177,6 +177,7 @@ class Report extends Model
                     COALESCE(SUM(i.total), 0) AS billed_amount
              FROM invoices i
              WHERE i.company_id = :company_id
+               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
                AND i.status IN (:draft_status, :sent_status, :paid_status, :overdue_status)
                AND i.invoice_date BETWEEN :from_date AND :to_date
              GROUP BY month_key
@@ -357,6 +358,7 @@ class Report extends Model
                     COALESCE(SUM(i.total), 0) AS amount
              FROM invoices i
              WHERE i.company_id = :company_id
+               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
                AND i.status IN (:draft_status, :sent_status, :paid_status, :overdue_status)
                AND i.invoice_date BETWEEN :from_date AND :to_date
              GROUP BY COALESCE(i.customer_name, "Client facture")',
@@ -458,6 +460,7 @@ class Report extends Model
                 COALESCE(SUM(CASE WHEN status IN (:sent_status, :paid_status, :overdue_status) THEN tax_amount ELSE 0 END), 0) AS vat_total
              FROM invoices
              WHERE company_id = :company_id
+               AND COALESCE(document_type, \'invoice\') = \'invoice\'
                AND invoice_date BETWEEN :from_date AND :to_date',
             [
                 'company_id' => $companyId,
@@ -501,6 +504,7 @@ class Report extends Model
             'SELECT COALESCE(SUM(i.total), 0) AS revenue
              FROM invoices i
              WHERE i.company_id = :company_id
+               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
                AND i.status IN (:draft_status, :sent_status, :paid_status, :overdue_status)
                AND i.invoice_date BETWEEN :from_date AND :to_date',
             [
@@ -526,6 +530,7 @@ class Report extends Model
             'SELECT COALESCE(SUM(i.total - COALESCE(i.paid_amount, 0)), 0) AS client_debt
              FROM invoices i
              WHERE i.company_id = :company_id
+               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
                AND i.status IN (:sent_status, :paid_status, :overdue_status)
               AND i.invoice_date <= :to_date',
             [
@@ -552,6 +557,7 @@ class Report extends Model
             ), 0) AS total_paid
              FROM invoices
              WHERE company_id = :company_id
+               AND COALESCE(document_type, \'invoice\') = \'invoice\'
                AND status IN (:sent_status, :paid_status, :overdue_status)
                AND COALESCE(paid_date, invoice_date) BETWEEN :from_date AND :to_date
                AND NOT EXISTS (
@@ -608,6 +614,7 @@ class Report extends Model
             'SELECT COALESCE(SUM(i.total), 0) AS revenue
              FROM invoices i
              WHERE i.company_id = :company_id
+               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
                AND i.status IN (:sent_status, :paid_status, :overdue_status)
                AND i.invoice_date BETWEEN :from_date AND :to_date',
             [
@@ -630,6 +637,7 @@ class Report extends Model
              FROM invoice_items it
              INNER JOIN invoices i ON i.id = it.invoice_id
              WHERE i.company_id = :company_id
+               AND COALESCE(i.document_type, \'invoice\') = \'invoice\'
                AND i.status IN (:sent_status, :paid_status, :overdue_status)
                AND i.invoice_date BETWEEN :from_date AND :to_date',
             [

@@ -1056,13 +1056,15 @@ class Database
 
     private function ensureFiscalInfrastructure(): void
     {
+        $isSqlite = strtolower((string) \Config::DB_DRIVER) === 'sqlite';
+
         $this->ensureCompanyColumn(
             'fiscal_period_duration_months',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'INTEGER DEFAULT 12' : 'INT DEFAULT 12'
+            $isSqlite ? 'INTEGER DEFAULT 12' : 'INT DEFAULT 12'
         );
 
         if (!$this->tableExists('fiscal_periods')) {
-            if (strtolower((string) \Config::DB_DRIVER) === 'sqlite') {
+            if ($isSqlite) {
                 $this->execute(
                     'CREATE TABLE fiscal_periods (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1096,49 +1098,74 @@ class Database
         $this->ensureTableColumn(
             'transactions',
             'fiscal_period_id',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'INTEGER NULL' : 'INT NULL'
+            $isSqlite ? 'INTEGER NULL' : 'INT NULL'
         );
         $this->ensureTableColumn(
             'invoices',
             'fiscal_period_id',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'INTEGER NULL' : 'INT NULL'
+            $isSqlite ? 'INTEGER NULL' : 'INT NULL'
         );
         $this->ensureTableColumn(
             'invoices',
             'paid_amount',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'NUMERIC DEFAULT 0' : 'DECIMAL(15,2) DEFAULT 0'
+            $isSqlite ? 'NUMERIC DEFAULT 0' : 'DECIMAL(15,2) DEFAULT 0'
         );
         $this->ensureTableColumn(
             'invoices',
             'paid_date',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'TEXT NULL' : 'DATE NULL'
+            $isSqlite ? 'TEXT NULL' : 'DATE NULL'
         );
         $this->ensureTableColumn(
             'invoices',
             'issuer_company_name',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'TEXT NULL' : 'VARCHAR(180) NULL'
+            $isSqlite ? 'TEXT NULL' : 'VARCHAR(180) NULL'
         );
         $this->ensureTableColumn(
             'invoices',
             'issuer_logo_url',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'TEXT NULL' : 'VARCHAR(500) NULL'
+            $isSqlite ? 'TEXT NULL' : 'VARCHAR(500) NULL'
         );
         $this->ensureTableColumn(
             'invoices',
             'issuer_brand_color',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'TEXT NULL' : 'VARCHAR(16) NULL'
+            $isSqlite ? 'TEXT NULL' : 'VARCHAR(16) NULL'
         );
         $this->ensureTableColumn(
             'invoices',
             'downloaded_at',
-            strtolower((string) \Config::DB_DRIVER) === 'sqlite' ? 'TEXT NULL' : 'TIMESTAMP NULL'
+            $isSqlite ? 'TEXT NULL' : 'TIMESTAMP NULL'
+        );
+	        $this->ensureTableColumn(
+	            'invoices',
+	            'document_type',
+	            $isSqlite ? 'TEXT DEFAULT "invoice"' : 'VARCHAR(20) DEFAULT "invoice"'
+	        );
+	        $this->ensureTableColumn(
+	            'invoices',
+	            'customer_description',
+	            $isSqlite ? 'TEXT NULL' : 'TEXT NULL'
+	        );
+	        $this->ensureTableColumn(
+	            'invoices',
+	            'labor_amount',
+	            $isSqlite ? 'NUMERIC DEFAULT 0' : 'DECIMAL(15,2) DEFAULT 0'
+	        );
+        $this->ensureTableColumn(
+            'invoices',
+            'labor_tax_rate',
+            $isSqlite ? 'NUMERIC DEFAULT 0' : 'DECIMAL(6,2) DEFAULT 0'
+        );
+        $this->ensureTableColumn(
+            'invoices',
+            'labor_tax_amount',
+            $isSqlite ? 'NUMERIC DEFAULT 0' : 'DECIMAL(15,2) DEFAULT 0'
         );
     }
 
-    private function ensureInvoiceItemsInfrastructure(): void
-    {
-        if ($this->tableExists('invoice_items')) {
-            $isSqlite = strtolower((string) \Config::DB_DRIVER) === 'sqlite';
+	    private function ensureInvoiceItemsInfrastructure(): void
+	    {
+	        if ($this->tableExists('invoice_items')) {
+	            $isSqlite = strtolower((string) \Config::DB_DRIVER) === 'sqlite';
             $this->ensureTableColumn(
                 'invoice_items',
                 'product_id',
@@ -1174,24 +1201,30 @@ class Database
                 'cogs_amount',
                 $isSqlite ? 'NUMERIC DEFAULT 0' : 'DECIMAL(15,2) DEFAULT 0'
             );
-            $this->ensureTableColumn(
-                'invoice_items',
-                'margin_amount',
-                $isSqlite ? 'NUMERIC DEFAULT 0' : 'DECIMAL(15,2) DEFAULT 0'
-            );
-            return;
-        }
+	            $this->ensureTableColumn(
+	                'invoice_items',
+	                'margin_amount',
+	                $isSqlite ? 'NUMERIC DEFAULT 0' : 'DECIMAL(15,2) DEFAULT 0'
+	            );
+	            $this->ensureTableColumn(
+	                'invoice_items',
+	                'line_kind',
+	                $isSqlite ? 'TEXT DEFAULT "standard"' : 'VARCHAR(20) DEFAULT "standard"'
+	            );
+	            return;
+	        }
 
         if (strtolower((string) \Config::DB_DRIVER) === 'sqlite') {
             $this->execute(
-                'CREATE TABLE invoice_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    invoice_id INTEGER NOT NULL,
-                    description TEXT NOT NULL,
-                    quantity NUMERIC NOT NULL DEFAULT 1,
-                    unit_price NUMERIC NOT NULL DEFAULT 0,
-                    product_id INTEGER NULL,
-                    unit_code TEXT NULL,
+	                'CREATE TABLE invoice_items (
+	                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	                    invoice_id INTEGER NOT NULL,
+	                    line_kind TEXT NOT NULL DEFAULT "standard",
+	                    description TEXT NOT NULL,
+	                    quantity NUMERIC NOT NULL DEFAULT 1,
+	                    unit_price NUMERIC NOT NULL DEFAULT 0,
+	                    product_id INTEGER NULL,
+	                    unit_code TEXT NULL,
                     factor_to_base NUMERIC NOT NULL DEFAULT 1,
                     quantity_base NUMERIC NULL,
                     stock_movement_id INTEGER NULL,
@@ -1209,15 +1242,16 @@ class Database
             return;
         }
 
-        $this->execute(
-            'CREATE TABLE invoice_items (
-                id INT PRIMARY KEY AUTO_INCREMENT,
-                invoice_id INT NOT NULL,
-                description VARCHAR(255) NOT NULL,
-                quantity DECIMAL(12,2) NOT NULL DEFAULT 1,
-                unit_price DECIMAL(15,2) NOT NULL DEFAULT 0,
-                product_id INT NULL,
-                unit_code VARCHAR(30) NULL,
+	        $this->execute(
+	            'CREATE TABLE invoice_items (
+	                id INT PRIMARY KEY AUTO_INCREMENT,
+	                invoice_id INT NOT NULL,
+	                line_kind VARCHAR(20) NOT NULL DEFAULT "standard",
+	                description VARCHAR(255) NOT NULL,
+	                quantity DECIMAL(12,2) NOT NULL DEFAULT 1,
+	                unit_price DECIMAL(15,2) NOT NULL DEFAULT 0,
+	                product_id INT NULL,
+	                unit_code VARCHAR(30) NULL,
                 factor_to_base DECIMAL(18,6) NOT NULL DEFAULT 1,
                 quantity_base DECIMAL(18,6) NULL,
                 stock_movement_id INT NULL,

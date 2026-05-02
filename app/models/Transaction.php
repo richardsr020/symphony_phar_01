@@ -328,7 +328,7 @@ class Transaction extends Model
             throw new \InvalidArgumentException('Les champs obligatoires de la transaction sont invalides.');
         }
 
-        if (!in_array($type, ['income', 'expense', 'transfer', 'journal'], true)) {
+        if (!in_array($type, ['income', 'expense'], true)) {
             throw new \InvalidArgumentException('Type de transaction invalide.');
         }
         [$expenseSubcategory, $expenseFiscalSubcategory, $expenseSubcategoryOther] = $this->resolveExpenseMetadata($payload, $type);
@@ -342,8 +342,6 @@ class Transaction extends Model
         $accountTypeByTransaction = [
             'income' => 'asset',
             'expense' => 'expense',
-            'transfer' => 'asset',
-            'journal' => 'asset',
         ];
 
         $isFiscalTreasuryFlow = $type === 'expense' && $expenseSubcategory === 'fiscal';
@@ -366,7 +364,7 @@ class Transaction extends Model
             );
         }
 
-        $isDebit = $type === 'income' || $type === 'transfer';
+        $isDebit = $type === 'income';
         $debit = $isDebit ? $amount : 0.00;
         $credit = $isDebit ? 0.00 : $amount;
 
@@ -451,7 +449,11 @@ class Transaction extends Model
                 continue;
             }
             $total = round((float) ($invoice['total'] ?? 0), 2);
+            $statusValue = (string) ($invoice['status'] ?? '');
             $paid = round((float) ($invoice['paid_amount'] ?? 0), 2);
+            if ($statusValue === 'paid' && $paid <= 0.009) {
+                $paid = $total;
+            }
             $balance = max($total - $paid, 0);
             $totalDebt += $balance;
             if ($remaining <= 0.009 || $balance <= 0) {
@@ -711,7 +713,7 @@ class Transaction extends Model
         }
 
         $invoice = $this->db->fetchOne(
-            'SELECT id, invoice_number, invoice_date, paid_date, customer_name, customer_phone, total, paid_amount, status
+            'SELECT id, document_type, invoice_number, invoice_date, paid_date, customer_name, customer_phone, total, paid_amount, status
              FROM invoices
              WHERE company_id = :company_id
                AND id = :id
@@ -724,6 +726,11 @@ class Transaction extends Model
 
         if (!is_array($invoice) || $invoice === []) {
             throw new \InvalidArgumentException('Facture introuvable.');
+        }
+
+        $documentType = strtolower(trim((string) ($invoice['document_type'] ?? 'invoice')));
+        if ($documentType !== 'invoice') {
+            throw new \InvalidArgumentException('Paiement non autorise pour un proforma.');
         }
 
         $invoiceNumber = (string) ($invoice['invoice_number'] ?? '');
@@ -1027,7 +1034,7 @@ class Transaction extends Model
             throw new \InvalidArgumentException('Les champs obligatoires de la transaction sont invalides.');
         }
 
-        if (!in_array($type, ['income', 'expense', 'transfer', 'journal'], true)) {
+        if (!in_array($type, ['income', 'expense'], true)) {
             throw new \InvalidArgumentException('Type de transaction invalide.');
         }
         [$expenseSubcategory, $expenseFiscalSubcategory, $expenseSubcategoryOther] = $this->resolveExpenseMetadata($payload, $type);
@@ -1044,31 +1051,36 @@ class Transaction extends Model
         $accountTypeByTransaction = [
             'income' => 'asset',
             'expense' => 'expense',
-            'transfer' => 'asset',
-            'journal' => 'asset',
         ];
 
         $isFiscalTreasuryFlow = $type === 'expense' && $expenseSubcategory === 'fiscal';
-        $accountId = (int) ($payload['account_id'] ?? 0);
+        $accountProvided = array_key_exists('account_id', $payload);
+        $accountId = $accountProvided ? (int) ($payload['account_id'] ?? 0) : 0;
         $accountModel = new Account($this->db);
 
         if ($isFiscalTreasuryFlow) {
             $accountId = 0;
         }
 
+        if (!$accountProvided && !$isFiscalTreasuryFlow) {
+            $accountId = (int) (($existing['entries'][0]['account_id'] ?? 0));
+        }
+
         if ($accountId > 0) {
             $account = $accountModel->findById($companyId, $accountId);
             if ($account === null) {
-                throw new \InvalidArgumentException('Compte comptable introuvable.');
+                $accountId = 0;
             }
-        } else {
+        }
+
+        if ($accountId <= 0) {
             $accountId = $accountModel->getOrCreateSystemAccount(
                 $companyId,
                 $isFiscalTreasuryFlow ? 'asset' : $accountTypeByTransaction[$type]
             );
         }
 
-        $isDebit = $type === 'income' || $type === 'transfer';
+        $isDebit = $type === 'income';
         $debit = $isDebit ? $amount : 0.00;
         $credit = $isDebit ? 0.00 : $amount;
 
@@ -1364,6 +1376,7 @@ class Transaction extends Model
                     ), 0) AS amount
              FROM invoices
              WHERE company_id = :company_id
+               AND COALESCE(document_type, \'invoice\') = \'invoice\'
                AND status IN (:sent_status, :paid_status, :overdue_status)
                AND NOT EXISTS (
                     SELECT 1 FROM invoice_payment_allocations a
