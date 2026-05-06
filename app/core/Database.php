@@ -49,6 +49,11 @@ class Database
 
     public static function bootstrapProviderAccess(): void
     {
+        // En production, on évite toute création automatique d'accès fournisseur.
+        if (is_callable(['\\Config', 'isProd']) && \Config::isProd()) {
+            return;
+        }
+
         if (!defined('Config::PROVIDER_BOOTSTRAP_ENABLED') || \Config::PROVIDER_BOOTSTRAP_ENABLED !== true) {
             return;
         }
@@ -124,6 +129,10 @@ class Database
 
             if (!is_dir($directory)) {
                 @mkdir($directory, 0775, true);
+            }
+
+            if (!is_dir($directory)) {
+                throw new RuntimeException('Dossier SQLite non accessible: ' . $directory);
             }
 
             $pdo = new PDO('sqlite:' . $databasePath, null, null, $options);

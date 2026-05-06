@@ -60,14 +60,18 @@ class AuthController extends Controller
 
     public function login(): void
     {
-        $matricule = trim((string) ($_POST['matricule'] ?? ''));
+        $email = trim((string) ($_POST['email'] ?? ''));
         $password = (string) ($_POST['password'] ?? '');
 
-        if ($matricule === '' || $password === '') {
+        if ($email === '' || $password === '') {
             $this->redirect('/login?error=missing_credentials');
         }
 
-        $user = $this->userModel->findByMatricule($matricule);
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            $this->redirect('/login?error=invalid_email');
+        }
+
+        $user = $this->userModel->findByEmail($email);
         if ($user === null || !password_verify($password, (string) ($user['password_hash'] ?? ''))) {
             $this->redirect('/login?error=invalid_credentials');
         }
@@ -93,17 +97,17 @@ class AuthController extends Controller
             $this->redirect('/login?error=registration_closed');
         }
 
-        $matricule = trim((string) ($_POST['matricule'] ?? ''));
-        $firstName = trim((string) ($_POST['first_name'] ?? ''));
-        $lastName = trim((string) ($_POST['last_name'] ?? ''));
-        $companyName = trim((string) ($_POST['company_name'] ?? ''));
-        $phone = trim((string) ($_POST['phone'] ?? ''));
+        $email = trim((string) ($_POST['email'] ?? ''));
         $password = (string) ($_POST['password'] ?? '');
         $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
         $termsAccepted = isset($_POST['terms']);
 
-        if ($matricule === '' || $firstName === '' || $lastName === '' || $companyName === '') {
+        if ($email === '') {
             $this->redirect('/register?error=missing_fields');
+        }
+
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            $this->redirect('/register?error=invalid_email');
         }
 
         if (strlen($password) < 8) {
@@ -118,17 +122,13 @@ class AuthController extends Controller
             $this->redirect('/register?error=terms_required');
         }
 
-        if ($this->userModel->findByMatricule($matricule) !== null) {
-            $this->redirect('/register?error=matricule_taken');
+        if ($this->userModel->findByEmail($email) !== null) {
+            $this->redirect('/register?error=email_taken');
         }
 
         try {
             $createdUserId = $this->userModel->createInitialAdmin([
-                'matricule' => $matricule,
-                'first_name' => $firstName,
-                'last_name' => $lastName,
-                'company_name' => $companyName,
-                'phone' => $phone,
+                'email' => $email,
                 'password' => $password,
             ]);
         } catch (\Throwable $exception) {
@@ -194,17 +194,17 @@ class AuthController extends Controller
     private function resolveAuthError(string $code): string
     {
         $messages = [
-            'missing_credentials' => 'Matricule et mot de passe requis.',
+            'missing_credentials' => 'Email et mot de passe requis.',
             'missing_fields' => 'Veuillez remplir tous les champs obligatoires.',
-            'invalid_matricule' => 'Matricule invalide.',
-            'invalid_credentials' => 'Matricule ou mot de passe incorrect.',
+            'invalid_email' => 'Email invalide.',
+            'invalid_credentials' => 'Email ou mot de passe incorrect.',
             'account_disabled' => 'Ce compte est désactivé.',
             'session_expired' => 'Votre session a expiré ou votre compte n existe plus. Reconnectez-vous.',
             'company_locked' => 'Accès suspendu pour cette entreprise. Contactez NestCorporation.',
             'weak_password' => 'Le mot de passe doit contenir au moins 8 caractères.',
             'password_mismatch' => 'Les mots de passe ne correspondent pas.',
             'terms_required' => 'Vous devez accepter les conditions d\'utilisation.',
-            'matricule_taken' => 'Ce matricule est déjà utilisé.',
+            'email_taken' => 'Cet email est déjà utilisé.',
             'register_failed' => 'Impossible de créer le compte pour le moment.',
             'registration_closed' => 'Les inscriptions sont fermées. Contactez l\'administrateur.',
         ];

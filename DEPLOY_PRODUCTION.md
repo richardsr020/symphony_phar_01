@@ -2,32 +2,25 @@
 
 Domaine cible: https://selleriewinner.ct.ws
 
-## Fichiers production crees
-- `config.prod.php`
-- `.htaccess.prod`
-
 ## Bascule en production
-1. Sauvegarder les fichiers actuels:
-   - `config.php` -> `config.dev.backup.php`
-   - `.htaccess` -> `.htaccess.dev.backup`
-2. Remplacer:
-   - `config.prod.php` -> `config.php`
-   - `.htaccess.prod` -> `.htaccess`
-3. Renseigner les secrets dans `config.php`:
+1. Dans `config.php`, modifier uniquement:
+   - `ENV` -> `production`
+   - `SITE_URL` -> votre URL (ex: `https://selleriewinner.ct.ws`)
+2. Renseigner les secrets dans `config.php`:
    - `PROVIDER_ADMIN_PASSWORD`
    - `PROVIDER_API_KEY`
    - `PROVIDER_WEBHOOK_SECRET`
    - `CRON_TOKEN`
    - `AI_PROVIDERS['gemini']['api_key']`
-4. Verifier permissions ecriture:
+3. Verifier permissions ecriture:
    - `storage/sessions`
    - `storage/cache`
-   - `logs`
-5. Verifier que HTTPS et le domaine canonique redirigent bien vers:
-   - `https://selleriewinner.ct.ws`
+   - `storage/database`
+   - `storage/logs`
+4. Verifier que HTTPS redirige bien vers votre domaine.
 
 ## Conseils exploitation
-- En production, `DB_AUTO_INIT` est desactive pour eviter une initialisation schema involontaire.
+- En production, l'initialisation auto du schema est desactivee (meme si `DB_AUTO_INIT=true` dans le fichier) pour eviter une re-init involontaire.
 - Les migrations SQL applicatives sont lancees automatiquement via `DB_AUTO_MIGRATE=true` (uniquement les migrations non encore appliquees).
-- `PROVIDER_BOOTSTRAP_ENABLED` est desactive pour eviter de recreer un compte admin fournisseur automatiquement.
+- Le bootstrap fournisseur est ignore en production.
 - Garder une copie hors depot des mots de passe et tokens de production.

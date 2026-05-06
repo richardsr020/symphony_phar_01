@@ -1,16 +1,24 @@
 <?php $footer = '<a href="/login">Retour à la connexion</a>'; ?>
 
-<div class="auth-form">
-    <p style="color: var(--text-secondary); margin-bottom: 20px;">
-        En mode démo, utilisez simplement un compte de démonstration pour accéder au dashboard.
-    </p>
+<h2>Mot de passe oublié</h2>
+<p class="auth-card-subtitle">En mode démo, utilisez simplement un compte existant pour accéder au tableau de bord.</p>
 
-    <form method="GET" action="/login" id="forgot-form">
-        <div class="form-group">
-            <label for="matricule" class="form-label">Matricule du compte</label>
-            <input type="text" id="matricule" name="matricule" class="form-input" placeholder="MAT-0001" required>
+<form method="GET" action="/login" id="forgot-form" class="auth-form">
+    <div class="auth-field">
+        <label class="auth-label" for="email">Email du compte</label>
+        <div class="auth-input-wrap">
+            <i class="fa-regular fa-envelope auth-input-icon" aria-hidden="true"></i>
+            <input
+                class="auth-input"
+                type="email"
+                id="email"
+                name="email"
+                placeholder="exemple@domaine.com"
+                autocomplete="email"
+                required
+            >
         </div>
+    </div>
 
-        <button type="submit" class="btn btn-primary btn-block">Retour à la connexion</button>
-    </form>
-</div>
+    <button type="submit" class="auth-button">Retour à la connexion</button>
+</form>

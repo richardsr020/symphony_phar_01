@@ -27,7 +27,8 @@ class Config {
     const DB_USER = 'root';
     const DB_PASS = '';
     const DB_CHARSET = 'utf8mb4';
-    const DB_PATH = __DIR__ . '/database/symphony.sqlite';
+    // Chemin SQLite unique pour dev + prod (dossier généralement "writable" sur la plupart des hébergements)
+    const DB_PATH = __DIR__ . '/storage/database/symphony.sqlite';
     const DB_SCHEMA_FILE = __DIR__ . '/database/schema.sql';
     const DB_AUTO_INIT = true;
     const DB_AUTO_MIGRATE = true;
@@ -96,7 +97,7 @@ class Config {
     
     // Logs
     const LOG_LEVEL = 'debug'; // debug, info, warning, error
-    const LOG_FILE = __DIR__ . '/logs/app.log';
+    const LOG_FILE = __DIR__ . '/storage/logs/app.log';
     
     // Cache
     const CACHE_ENABLED = true;
@@ -239,22 +240,39 @@ class Config {
         }
 
         // Initialisation / migrations automatiques de la base
-        if (self::DB_AUTO_INIT || self::DB_AUTO_MIGRATE) {
+        // Par défaut: auto-init uniquement en dev; migrations autorisées en prod.
+        $autoInit = self::DB_AUTO_INIT && self::isDev();
+        $autoMigrate = self::DB_AUTO_MIGRATE;
+
+        if ($autoInit || $autoMigrate) {
             try {
                 $appPath = defined('APP_PATH') ? APP_PATH : __DIR__ . '/app';
                 require_once $appPath . '/core/Database.php';
-                if (self::DB_AUTO_INIT) {
+                if ($autoInit) {
                     \App\Core\Database::initializeSchema();
                     \App\Core\Database::bootstrapProviderAccess();
                 }
 
-                if (self::DB_AUTO_MIGRATE) {
+                if ($autoMigrate) {
                     require_once $appPath . '/core/MigrationContext.php';
                     require_once $appPath . '/core/MigrationRunner.php';
                     (new \App\Core\MigrationRunner())->runPending();
                 }
             } catch (\Throwable $exception) {
-                error_log('[Symphony] Erreur initialisation/migration DB: ' . $exception->getMessage());
+                if (class_exists('\\App\\Core\\AppLogger')) {
+                    \App\Core\AppLogger::error('Erreur initialisation/migration DB', [
+                        'class' => get_class($exception),
+                        'message' => $exception->getMessage(),
+                        'file' => $exception->getFile(),
+                        'line' => $exception->getLine(),
+                        'driver' => (string) self::DB_DRIVER,
+                        'db_path' => (string) self::DB_PATH,
+                        'db_host' => (string) self::DB_HOST,
+                        'db_name' => (string) self::DB_NAME,
+                    ]);
+                } else {
+                    error_log('[Symphony] Erreur initialisation/migration DB: ' . $exception->getMessage());
+                }
                 if (self::isDev()) {
                     die('Erreur base de données: ' . $exception->getMessage());
                 }
@@ -266,4 +284,3 @@ class Config {
 
 // Initialisation
 Config::init();
-

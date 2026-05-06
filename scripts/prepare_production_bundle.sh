@@ -7,19 +7,23 @@ BUNDLE_DIR="$ROOT_DIR/production_bundle"
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR"
 
-cp "$ROOT_DIR/config.prod.php" "$BUNDLE_DIR/config.php"
-cp "$ROOT_DIR/.htaccess.prod" "$BUNDLE_DIR/.htaccess"
+cp "$ROOT_DIR/config.php" "$BUNDLE_DIR/config.php"
+cp "$ROOT_DIR/.htaccess" "$BUNDLE_DIR/.htaccess"
 cp "$ROOT_DIR/DEPLOY_PRODUCTION.md" "$BUNDLE_DIR/DEPLOY_PRODUCTION.md"
 
 cat > "$BUNDLE_DIR/README.txt" <<'TXT'
 Bundle de production prepare.
 
 Contenu:
-- config.php (base production)
-- .htaccess (regles Apache production)
+- config.php
+- .htaccess
 - DEPLOY_PRODUCTION.md (procedure)
 
-Avant mise en ligne, completez les secrets:
+Avant mise en ligne, modifiez dans config.php:
+- ENV = production
+- SITE_URL = votre URL
+
+Puis completez les secrets:
 - PROVIDER_ADMIN_PASSWORD
 - PROVIDER_API_KEY
 - PROVIDER_WEBHOOK_SECRET

@@ -195,7 +195,10 @@ class MigrationRunner
             'batch' => $batch,
         ]);
 
-        $this->database->beginTransaction();
+        $useTransaction = $this->driver === 'sqlite';
+        if ($useTransaction) {
+            $this->database->beginTransaction();
+        }
         try {
             $up($this->context);
 
@@ -211,9 +214,11 @@ class MigrationRunner
                 ]
             );
 
-            $this->database->commit();
+            if ($useTransaction) {
+                $this->database->commit();
+            }
         } catch (\Throwable $exception) {
-            if ($this->database->getConnection()->inTransaction()) {
+            if ($useTransaction && $this->database->getConnection()->inTransaction()) {
                 $this->database->rollback();
             }
 

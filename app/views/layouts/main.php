@@ -19,7 +19,7 @@ $asset = static function (string $path) use ($basePath): string {
     <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/style.css'), ENT_QUOTES, 'UTF-8') ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/theme-light.css'), ENT_QUOTES, 'UTF-8') ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/css/theme-dark.css'), ENT_QUOTES, 'UTF-8') ?>">
-    <link rel="stylesheet" href="<?= htmlspecialchars($asset('/public/Font-Awesome-7.x/css/all.min.css'), ENT_QUOTES, 'UTF-8') ?>">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" referrerpolicy="no-referrer">
 
     <!-- Tailwind (local copy for offline) -->
     <script>
@@ -28,8 +28,8 @@ $asset = static function (string $path) use ($basePath): string {
     </script>
     <script src="<?= htmlspecialchars($asset('/public/js/libs/tailwind.min.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
     
-    <!-- Chart.js (local copy for offline) -->
-    <script src="<?= htmlspecialchars($asset('/public/chartbundlejs/dist/chart.umd.min.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+    <!-- Chart.js (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="<?= htmlspecialchars($asset('/public/js/modules/pdf-export.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
 </head>
 <body>

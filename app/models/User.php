@@ -42,13 +42,18 @@ class User extends Model
 
     public function findByMatricule(string $matricule): ?array
     {
+        return $this->findByEmail($matricule);
+    }
+
+    public function findByEmail(string $email): ?array
+    {
         return $this->db->fetchOne(
             'SELECT u.*, u.email AS matricule, c.name AS company_name
              FROM users u
              INNER JOIN companies c ON c.id = u.company_id
              WHERE u.email = :matricule
              LIMIT 1',
-            ['matricule' => $matricule]
+            ['matricule' => trim($email)]
         );
     }
 
@@ -77,6 +82,11 @@ class User extends Model
 
     public function createInitialAdmin(array $payload): int
     {
+        $email = trim((string) ($payload['email'] ?? ($payload['matricule'] ?? '')));
+        if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            throw new \InvalidArgumentException('Email invalide.');
+        }
+
         $passwordHash = password_hash(
             (string) $payload['password'],
             PASSWORD_BCRYPT,
@@ -87,7 +97,22 @@ class User extends Model
             throw new RuntimeException('Impossible de générer le hash du mot de passe.');
         }
 
+        $companyName = trim((string) ($payload['company_name'] ?? ''));
+        if ($companyName === '') {
+            $localPart = explode('@', $email)[0] ?? '';
+            $localPart = preg_replace('/[^A-Za-z0-9]+/', ' ', (string) $localPart);
+            $localPart = trim((string) $localPart);
+            $companyName = $localPart !== '' ? ucfirst(substr($localPart, 0, 60)) : 'Entreprise';
+        }
+
         $companyEmail = trim((string) ($payload['company_email'] ?? ''));
+        if ($companyEmail === '') {
+            $companyEmail = $email;
+        }
+
+        $firstName = trim((string) ($payload['first_name'] ?? ''));
+        $lastName = trim((string) ($payload['last_name'] ?? ''));
+
         $this->db->beginTransaction();
 
         try {
@@ -95,8 +120,8 @@ class User extends Model
                 'INSERT INTO companies (name, legal_name, email, phone, country, currency)
                  VALUES (:name, :legal_name, :email, :phone, :country, :currency)',
                 [
-                    'name' => $payload['company_name'],
-                    'legal_name' => $payload['company_name'],
+                    'name' => $companyName,
+                    'legal_name' => $companyName,
                     'email' => $companyEmail !== '' ? $companyEmail : null,
                     'phone' => $payload['phone'] ?: null,
                     'country' => 'RDC',
@@ -111,10 +136,10 @@ class User extends Model
                  VALUES (:company_id, :email, :password_hash, :first_name, :last_name, :role, :language, :theme, :is_active)',
                 [
                     'company_id' => $companyId,
-                    'email' => $payload['matricule'],
+                    'email' => $email,
                     'password_hash' => $passwordHash,
-                    'first_name' => $payload['first_name'],
-                    'last_name' => $payload['last_name'],
+                    'first_name' => $firstName !== '' ? $firstName : null,
+                    'last_name' => $lastName !== '' ? $lastName : null,
                     'role' => 'admin',
                     'language' => 'fr',
                     'theme' => 'light',
