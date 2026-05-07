@@ -47,7 +47,7 @@ $lineItems = [
         'unit_code' => '',
         'qty' => 1,
         'price' => $isTemplateMode ? 250 : 0,
-        'tax' => $defaultTaxRate,
+        'line_kind' => 'standard',
     ],
 ];
 
@@ -58,7 +58,7 @@ if ($isTemplateMode) {
         'unit_code' => '',
         'qty' => 1,
         'price' => 120,
-        'tax' => $defaultTaxRate,
+        'line_kind' => 'standard',
     ];
 }
 
@@ -69,19 +69,42 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         $clientType = 'anonymous';
     }
     $lineItems = [];
+    $hasVatLine = false;
 	    foreach (($invoiceToEdit['items'] ?? []) as $item) {
+            $lineKind = strtolower(trim((string) ($item['line_kind'] ?? 'standard')));
+            if (!in_array($lineKind, ['standard', 'other', 'vat'], true)) {
+                $lineKind = 'standard';
+            }
+            if ($lineKind === 'vat') {
+                $hasVatLine = true;
+            }
 	        $lineItems[] = [
 	            'description' => (string) ($item['description'] ?? ''),
 	            'product_id' => isset($item['product_id']) ? (int) $item['product_id'] : null,
 	            'unit_code' => (string) ($item['unit_code'] ?? ''),
 	            'qty' => (float) ($item['quantity'] ?? 1),
 	            'price' => (float) ($item['unit_price'] ?? 0),
-	            'tax' => (float) ($item['tax_rate'] ?? $defaultTaxRate),
-	            'line_kind' => (string) ($item['line_kind'] ?? 'standard'),
+                'vat_rate' => (float) ($item['tax_rate'] ?? $defaultTaxRate),
+	            'line_kind' => $lineKind,
 	        ];
 	    }
+        if (!$hasVatLine) {
+            $invoiceTaxRate = round((float) ($invoiceToEdit['tax_rate'] ?? 0), 2);
+            $invoiceTaxAmount = round((float) ($invoiceToEdit['tax_amount'] ?? 0), 2);
+            if ($invoiceTaxRate > 0.009 || $invoiceTaxAmount > 0.009) {
+                $lineItems[] = [
+                    'description' => 'TVA',
+                    'product_id' => null,
+                    'unit_code' => '',
+                    'qty' => 1,
+                    'price' => 0,
+                    'vat_rate' => $invoiceTaxRate > 0.009 ? $invoiceTaxRate : $defaultTaxRate,
+                    'line_kind' => 'vat',
+                ];
+            }
+        }
     if ($lineItems === []) {
-        $lineItems[] = ['description' => '', 'product_id' => null, 'unit_code' => '', 'qty' => 1, 'price' => 0, 'tax' => $defaultTaxRate];
+        $lineItems[] = ['description' => '', 'product_id' => null, 'unit_code' => '', 'qty' => 1, 'price' => 0, 'line_kind' => 'standard'];
     }
 }
 ?>
@@ -194,6 +217,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	                    <div class="section-header">
 	                        <h3 class="section-title">Lignes de vente</h3>
 	                        <div style="display:flex; gap:10px; align-items:center;">
+	                            <button type="button" class="btn btn-soft" id="add-vat-line-btn"> + TVA</button>
 	                            <button type="button" class="btn btn-soft" id="add-other-line-btn"> + Autre</button>
 	                            <button type="button" class="btn btn-add" id="add-line-btn"> + Ajouter une ligne</button>
 	                        </div>
@@ -206,7 +230,6 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                                 <col class="line-col-qty">
                                 <col class="line-col-unit">
                                 <col class="line-col-price">
-                                <col class="line-col-tax">
                                 <col class="line-col-total">
                                 <col class="line-col-actions">
                             </colgroup>
@@ -216,7 +239,6 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                                     <th>Quantite</th>
                                     <th>Unite</th>
                                     <th>Prix unitaire</th>
-                                    <th>TVA (%)</th>
                                     <th>Total ligne</th>
                                     <th></th>
                                 </tr>
@@ -226,7 +248,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	                                <?php $lineKind = strtolower(trim((string) ($item['line_kind'] ?? 'standard'))); ?>
 	                                <?php if ($lineKind === 'other'): ?>
 	                                <tr class="line-item-row line-item-row-other">
-	                                    <td colspan="5">
+	                                    <td colspan="4">
 	                                        <input
 	                                            type="text"
 	                                            class="line-description js-line-input"
@@ -251,6 +273,36 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	                                            aria-label="Total ligne"
 	                                        >
 	                                        <span class="line-total" data-line-total style="display:none;">0.00</span>
+	                                    </td>
+	                                    <td>
+	                                        <button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button>
+	                                    </td>
+	                                </tr>
+	                                <?php continue; ?>
+	                                <?php endif; ?>
+	                                <?php if ($lineKind === 'vat'): ?>
+	                                <?php $vatRateValue = isset($item['vat_rate']) ? round((float) $item['vat_rate'], 2) : $defaultTaxRate; ?>
+	                                <tr class="line-item-row line-item-row-vat">
+	                                    <td colspan="4">
+                                            <div class="vat-line-meta">
+                                                <strong>TVA</strong>
+                                                <select name="line_tax[]" class="line-tax line-vat-rate js-line-input" aria-label="Taux TVA">
+                                                    <option value="0" <?= ((float) $vatRateValue) === 0.0 ? 'selected' : '' ?>>0%</option>
+                                                    <option value="5" <?= ((float) $vatRateValue) === 5.0 ? 'selected' : '' ?>>5%</option>
+                                                    <option value="10" <?= ((float) $vatRateValue) === 10.0 ? 'selected' : '' ?>>10%</option>
+                                                    <option value="16" <?= ((float) $vatRateValue) === 16.0 ? 'selected' : '' ?>>16%</option>
+                                                </select>
+                                                <small class="text-secondary">Calculee uniquement sur les lignes produits.</small>
+                                            </div>
+	                                        <input type="hidden" name="line_description[]" class="line-description-hidden" value="TVA">
+	                                        <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
+	                                        <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="vat">
+	                                        <input type="hidden" name="line_qty[]" class="line-qty js-line-input" value="1">
+	                                        <input type="hidden" name="line_unit_code[]" class="line-unit-code js-line-input" value="">
+	                                        <input type="hidden" name="line_price[]" class="line-price js-line-input" value="0">
+	                                    </td>
+	                                    <td>
+	                                        <span class="line-total" data-line-total>0.00</span>
 	                                    </td>
 	                                    <td>
 	                                        <button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button>
@@ -292,6 +344,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	                                        <input type="hidden" name="line_description[]" class="line-description-hidden" value="<?= htmlspecialchars((string) $item['description'], ENT_QUOTES, 'UTF-8') ?>">
 	                                        <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="<?= htmlspecialchars((string) ((int) ($item['product_id'] ?? 0)), ENT_QUOTES, 'UTF-8') ?>">
 	                                        <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="<?= htmlspecialchars((string) ($item['line_kind'] ?? 'standard'), ENT_QUOTES, 'UTF-8') ?>">
+                                            <input type="hidden" name="line_tax[]" class="line-tax js-line-input" value="0">
 	                                    </td>
                                     <td>
                                         <input
@@ -320,14 +373,6 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                                             required
                                             <?= $invoiceType === 'product' ? 'readonly' : '' ?>
                                         >
-                                    </td>
-                                    <td>
-                                        <select name="line_tax[]" class="line-tax js-line-input">
-                                            <option value="0" <?= ((int) $item['tax']) === 0 ? 'selected' : '' ?>>0</option>
-                                            <option value="5" <?= ((int) $item['tax']) === 5 ? 'selected' : '' ?>>5</option>
-                                            <option value="10" <?= ((int) $item['tax']) === 10 ? 'selected' : '' ?>>10</option>
-                                            <option value="16" <?= ((float) $item['tax']) === 16.0 ? 'selected' : '' ?>>16</option>
-                                        </select>
                                     </td>
                                     <td>
                                         <span class="line-total" data-line-total>0.00</span>
@@ -659,10 +704,6 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     width: 112px;
 }
 
-.line-items-table .line-col-tax {
-    width: 82px;
-}
-
 .line-items-table .line-col-total {
     width: 146px;
 }
@@ -709,6 +750,26 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 .line-total {
     display: inline-block;
     min-width: 120px;
+}
+
+.vat-line-meta {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.vat-line-meta strong {
+    font-size: 13px;
+}
+
+.vat-line-meta .line-vat-rate {
+    width: auto;
+    min-width: 120px;
+}
+
+.line-item-row-vat td {
+    background: rgba(14, 165, 233, 0.08);
 }
 
 .line-product-wrap {
@@ -909,6 +970,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     }
 	    const lineItemsBody = document.getElementById('line-items-body');
 	    const addLineBtn = document.getElementById('add-line-btn');
+        const addVatLineBtn = document.getElementById('add-vat-line-btn');
 	    const addOtherLineBtn = document.getElementById('add-other-line-btn');
     const invoiceTypeSelect = document.getElementById('invoice-type-select');
     const currencySelect = document.getElementById('invoice-currency');
@@ -1586,6 +1648,32 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	        const qtyInput = row.querySelector('.line-qty');
 	        const priceInput = row.querySelector('.line-price');
 
+	        if (rowKind === 'vat') {
+	            if (productHidden) {
+	                productHidden.value = '';
+	            }
+	            if (productSelect) {
+	                productSelect.value = '';
+	            }
+	            if (unitSelect) {
+	                unitSelect.value = '';
+	                unitSelect.dataset.selectedUnit = '';
+	            }
+	            if (stockHint) {
+	                stockHint.textContent = '';
+	            }
+	            if (descriptionHidden) {
+	                descriptionHidden.value = 'TVA';
+	            }
+	            if (qtyInput) {
+	                setInputValue(qtyInput, '1');
+	            }
+	            if (priceInput) {
+	                setInputValue(priceInput, '0');
+	            }
+	            return;
+	        }
+
 	        if (rowKind === 'other') {
 	            if (productHidden) {
 	                productHidden.value = '';
@@ -1652,7 +1740,6 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                     ? (availableInBase / selectedUnitFactor)
                     : availableInBase;
                 stockHint.textContent = `Stock actuel: ${formatNumberCompact(availableInSelectedUnit, 2)}`;
-                const taxInput = row.querySelector('.line-tax');
                 const currentPrice = parseNumber(priceInput?.value || '0');
                 if (priceInput && (!isRowManual(row, 'manualPrice') || currentPrice <= 0)) {
                     const unitFactorForPrice = getUnitFactorToBase(product, selectedUnitCode || product.unit);
@@ -1664,11 +1751,6 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                 }
                 if (qtyInput && !isRowManual(row, 'manualQty') && String(qtyInput.value || '').trim() === '') {
                     setInputValue(qtyInput, '1');
-                }
-                if (taxInput && !isRowManual(row, 'manualTax')) {
-                    const taxCandidate = Number(defaultTaxRate).toFixed(0);
-                    const hasCandidate = !!taxInput.querySelector(`option[value="${taxCandidate}"]`);
-                    setInputValue(taxInput, hasCandidate ? taxCandidate : '0');
                 }
             } else {
                 if (!isRowManual(row, 'manualDescription')) {
@@ -1725,6 +1807,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	        const unitSelect = row.querySelector('.line-unit-code');
 	        const priceInput = row.querySelector('.line-price');
 	        const otherTotalInput = row.querySelector('.line-other-total');
+            const taxInput = row.querySelector('.line-tax');
 	        let rowValid = true;
 
         clearFieldError(descriptionInput);
@@ -1732,6 +1815,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         clearFieldError(qtyInput);
         clearFieldError(unitSelect);
         clearFieldError(priceInput);
+        clearFieldError(taxInput);
 
 	        if (rowKind === 'other') {
 	            if (String(descriptionHidden?.value || '').trim() === '') {
@@ -1745,6 +1829,18 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	            }
 	            return rowValid;
 	        }
+
+            if (rowKind === 'vat') {
+                const vatRate = parseNumber(taxInput?.value || '0');
+                if (!taxInput) {
+                    return false;
+                }
+                if (vatRate < 0) {
+                    setFieldError(taxInput, 'Taux TVA invalide.');
+                    return false;
+                }
+                return true;
+            }
 
 	        if (isProductInvoice()) {
 	            if (String(productHidden?.value || '').trim() === '') {
@@ -1795,17 +1891,43 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	            if (priceInput && otherTotalInput) {
 	                setInputValue(priceInput, String(parseNumber(otherTotalInput.value || '0').toFixed(2)));
 	            }
+	            const total = Math.max(parseNumber(priceInput?.value || '0'), 0);
+	            row.dataset.subtotal = String(total);
+	            row.dataset.tax = '0';
+	            const lineTotalEl = row.querySelector('[data-line-total]');
+	            if (lineTotalEl) {
+	                lineTotalEl.textContent = formatMoney(total);
+	            }
+	            return;
 	        }
+
+            if (rowKind === 'vat') {
+                if (qtyInput) {
+                    setInputValue(qtyInput, '1');
+                }
+                if (priceInput) {
+                    setInputValue(priceInput, '0');
+                }
+                row.dataset.subtotal = '0';
+                row.dataset.tax = '0';
+                const lineTotalEl = row.querySelector('[data-line-total]');
+                if (lineTotalEl) {
+                    lineTotalEl.textContent = formatMoney(0);
+                }
+                return;
+            }
+
+            if (taxInput) {
+                setInputValue(taxInput, '0');
+            }
 
 	        const qty = Math.max(parseNumber(qtyInput?.value || '0'), 0);
 	        const price = parseNumber(priceInput?.value || '0');
-	        const taxRate = parseNumber(taxInput?.value || '0');
 	        const subtotal = qty * price;
-	        const tax = subtotal * (taxRate / 100);
-	        const total = subtotal + tax;
+	        const total = subtotal;
 
 	        row.dataset.subtotal = String(subtotal);
-	        row.dataset.tax = String(tax);
+	        row.dataset.tax = '0';
 	        const lineTotalEl = row.querySelector('[data-line-total]');
 	        if (lineTotalEl) {
 	            lineTotalEl.textContent = formatMoney(total);
@@ -1815,12 +1937,39 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
     const computeSummary = () => {
         let subtotal = 0;
         let tax = 0;
+        let vatBase = 0;
+        const vatRows = [];
 
         getRows().forEach((row) => {
             updateRow(row);
-            subtotal += parseNumber(row.dataset.subtotal);
-            tax += parseNumber(row.dataset.tax);
+            const kind = getRowKind(row);
+            const rowSubtotal = parseNumber(row.dataset.subtotal);
+            if (kind !== 'vat') {
+                subtotal += rowSubtotal;
+            }
+            if (kind === 'standard') {
+                vatBase += rowSubtotal;
+            }
+            if (kind === 'vat') {
+                vatRows.push(row);
+            }
         });
+
+        if (vatRows.length > 0) {
+            const vatRate = Math.max(parseNumber(vatRows[0].querySelector('.line-tax')?.value || '0'), 0);
+            const vatAmount = Math.round(vatBase * (vatRate / 100) * 100) / 100;
+            tax += vatAmount;
+
+            vatRows.forEach((row, index) => {
+                const amount = index === 0 ? vatAmount : 0;
+                row.dataset.subtotal = '0';
+                row.dataset.tax = String(amount);
+                const lineTotalEl = row.querySelector('[data-line-total]');
+                if (lineTotalEl) {
+                    lineTotalEl.textContent = formatMoney(amount);
+                }
+            });
+        }
 
         const laborAmount = Math.max(parseNumber(laborAmountInput?.value || '0'), 0);
         const laborTaxRate = Math.max(parseNumber(laborTaxRateSelect?.value || '0'), 0);
@@ -2050,6 +2199,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	                <input type="hidden" name="line_description[]" class="line-description-hidden" value="">
 	                <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
 	                <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="standard">
+                    <input type="hidden" name="line_tax[]" class="line-tax js-line-input" value="0">
 	            </td>
             <td><input type="number" name="line_qty[]" class="line-qty js-line-input" min="0.000001" step="0.000001" value="1" required></td>
             <td>
@@ -2058,14 +2208,6 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
                 </select>
             </td>
             <td><input type="number" name="line_price[]" class="line-price js-line-input" min="0" step="0.01" value="0" required></td>
-            <td>
-                <select name="line_tax[]" class="line-tax js-line-input">
-                    <option value="0" ${defaultTaxRate === 0 ? 'selected' : ''}>0</option>
-                    <option value="5" ${defaultTaxRate === 5 ? 'selected' : ''}>5</option>
-                    <option value="10" ${defaultTaxRate === 10 ? 'selected' : ''}>10</option>
-                    <option value="16" ${defaultTaxRate === 16 ? 'selected' : ''}>16</option>
-                </select>
-            </td>
             <td><span class="line-total" data-line-total>0.00</span></td>
             <td><button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button></td>
 	        </tr>
@@ -2073,7 +2215,7 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 
 	    const createOtherRowHtml = () => `
 	        <tr class="line-item-row line-item-row-other">
-	            <td colspan="5">
+	            <td colspan="4">
 	                <input type="text" class="line-description js-line-input" placeholder="Autre (frais, remise spéciale, transport...)">
 	                <input type="hidden" name="line_description[]" class="line-description-hidden" value="">
 	                <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
@@ -2090,6 +2232,33 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	            <td><button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button></td>
 	        </tr>
 	    `;
+
+        const createVatRowHtml = () => `
+            <tr class="line-item-row line-item-row-vat">
+                <td colspan="4">
+                    <div class="vat-line-meta">
+                        <strong>TVA</strong>
+                        <select name="line_tax[]" class="line-tax line-vat-rate js-line-input" aria-label="Taux TVA">
+                            <option value="0" ${defaultTaxRate === 0 ? 'selected' : ''}>0%</option>
+                            <option value="5" ${defaultTaxRate === 5 ? 'selected' : ''}>5%</option>
+                            <option value="10" ${defaultTaxRate === 10 ? 'selected' : ''}>10%</option>
+                            <option value="16" ${defaultTaxRate === 16 ? 'selected' : ''}>16%</option>
+                        </select>
+                        <small class="text-secondary">Calculee uniquement sur les lignes produits.</small>
+                    </div>
+                    <input type="hidden" name="line_description[]" class="line-description-hidden" value="TVA">
+                    <input type="hidden" name="line_product_id[]" class="line-product-hidden" value="">
+                    <input type="hidden" name="line_kind[]" class="line-kind-hidden" value="vat">
+                    <input type="hidden" name="line_qty[]" class="line-qty js-line-input" value="1">
+                    <input type="hidden" name="line_unit_code[]" class="line-unit-code js-line-input" value="">
+                    <input type="hidden" name="line_price[]" class="line-price js-line-input" value="0">
+                </td>
+                <td><span class="line-total" data-line-total>0.00</span></td>
+                <td><button type="button" class="remove-line-btn" aria-label="Supprimer ligne">x</button></td>
+            </tr>
+        `;
+
+        const getVatRow = () => getRows().find((row) => getRowKind(row) === 'vat') || null;
 
     const setInvoiceTypeUi = () => {
         const isProduct = isProductInvoice();
@@ -2109,6 +2278,20 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
 	        attachRowEvents(getRows()[getRows().length - 1]);
 	        setInvoiceTypeUi();
 	    });
+
+        if (addVatLineBtn) {
+            addVatLineBtn.addEventListener('click', () => {
+                const existingVatRow = getVatRow();
+                if (existingVatRow) {
+                    notify('La ligne TVA est deja presente.', 'info');
+                    existingVatRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return;
+                }
+                lineItemsBody.insertAdjacentHTML('beforeend', createVatRowHtml());
+                attachRowEvents(getRows()[getRows().length - 1]);
+                setInvoiceTypeUi();
+            });
+        }
 
 	    if (addOtherLineBtn) {
 	        addOtherLineBtn.addEventListener('click', () => {
@@ -2196,6 +2379,13 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
             }
         });
 
+        const rows = getRows();
+        const hasNonVatLine = rows.some((row) => getRowKind(row) !== 'vat');
+        if (!hasNonVatLine) {
+            notify('Ajoutez au moins une ligne de vente (produit/service) ou une ligne autre.', 'warning');
+            isValid = false;
+        }
+
         if (!isValid) {
             event.preventDefault();
             const firstInvalidField = form.querySelector('.input-error');
@@ -2219,21 +2409,34 @@ if (is_array($invoiceToEdit) && $invoiceToEdit !== []) {
         const paymentMethod = String(paymentMethodSelect?.value || '-');
         const rowsHtml = getRows().map((row) => {
             syncRowDescription(row);
+            const kind = getRowKind(row);
             const description = String(row.querySelector('.line-description-hidden')?.value || '').trim() || '-';
             const qty = parseNumber(row.querySelector('.line-qty')?.value || '0');
             const unitCode = String(row.querySelector('.line-unit-code')?.value || '-').toUpperCase();
             const price = parseNumber(row.querySelector('.line-price')?.value || '0');
-            const taxRate = parseNumber(row.querySelector('.line-tax')?.value || '0');
-            const rowSubtotal = qty * price;
-            const rowTax = rowSubtotal * (taxRate / 100);
+            const rowSubtotal = parseNumber(row.dataset.subtotal || '0');
+            const rowTax = parseNumber(row.dataset.tax || '0');
             const rowTotal = rowSubtotal + rowTax;
+
+            if (kind === 'vat') {
+                const vatRate = parseNumber(row.querySelector('.line-tax')?.value || '0');
+                const label = `TVA (${formatNumberCompact(vatRate, 2)}%)`;
+                return `
+                    <tr>
+                        <td>${escapeHtml(label)}</td>
+                        <td style="text-align:right;">-</td>
+                        <td style="text-align:center;">-</td>
+                        <td style="text-align:right;">-</td>
+                        <td style="text-align:right;">${escapeHtml(formatMoney(rowTotal))}</td>
+                    </tr>
+                `;
+            }
             return `
                 <tr>
                     <td>${escapeHtml(description)}</td>
                     <td style="text-align:right;">${escapeHtml(formatNumberCompact(qty, 6))}</td>
                     <td style="text-align:center;">${escapeHtml(unitCode)}</td>
                     <td style="text-align:right;">${escapeHtml(formatMoney(price))}</td>
-                    <td style="text-align:right;">${escapeHtml(formatNumberCompact(taxRate, 2))}%</td>
                     <td style="text-align:right;">${escapeHtml(formatMoney(rowTotal))}</td>
                 </tr>
             `;
@@ -2278,7 +2481,6 @@ th{background:#f8fafc;text-align:left;color:#475569;}
                     <th style="text-align:right;">Quantite</th>
                     <th style="text-align:center;">Unite</th>
                     <th style="text-align:right;">Prix unit.</th>
-                    <th style="text-align:right;">TVA</th>
                     <th style="text-align:right;">Total ligne</th>
                 </tr>
             </thead>

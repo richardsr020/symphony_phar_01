@@ -322,7 +322,6 @@ $formatMoney = static function ($value) use ($formatNumber): string {
                     <th>Description</th>
                     <th>Quantite</th>
                     <th>Prix unit.</th>
-                    <th>TVA %</th>
                     <th>COGS</th>
                     <th>Marge</th>
                     <th>Total</th>
@@ -330,11 +329,18 @@ $formatMoney = static function ($value) use ($formatNumber): string {
             </thead>
             <tbody>
                 <?php foreach ($selectedInvoice['items'] as $item): ?>
+                <?php
+                    $lineKind = strtolower(trim((string) ($item['line_kind'] ?? 'standard')));
+                    $displayDescription = (string) ($item['description'] ?? '');
+                    if ($lineKind === 'vat') {
+                        $rateLabel = $formatNumber((float) ($item['tax_rate'] ?? 0), 2);
+                        $displayDescription = 'TVA (' . $rateLabel . '%)';
+                    }
+                ?>
                 <tr>
-                    <td><?= htmlspecialchars((string) $item['description'], ENT_QUOTES, 'UTF-8') ?></td>
+                    <td><?= htmlspecialchars($displayDescription, ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= htmlspecialchars($formatNumber((float) $item['quantity'], 2), ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= htmlspecialchars($formatMoney((float) $item['unit_price']), ENT_QUOTES, 'UTF-8') ?></td>
-                    <td><?= htmlspecialchars($formatNumber((float) $item['tax_rate'], 2), ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= htmlspecialchars($formatMoney((float) ($item['cogs_amount'] ?? 0)), ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= htmlspecialchars($formatMoney((float) ($item['margin_amount'] ?? 0)), ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= htmlspecialchars($formatMoney((float) $item['total']), ENT_QUOTES, 'UTF-8') ?></td>

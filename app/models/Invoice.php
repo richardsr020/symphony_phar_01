@@ -1544,7 +1544,7 @@ class Invoice extends Model
 
 	                if (!isset($mergedItems[$key])) {
 	                    $lineKind = strtolower(trim((string) ($item['line_kind'] ?? 'standard')));
-	                    if ($lineKind !== 'other') {
+	                    if (!in_array($lineKind, ['other', 'vat'], true)) {
 	                        $lineKind = 'standard';
 	                    }
 	                    $mergedItems[$key] = [
@@ -1803,133 +1803,172 @@ class Invoice extends Model
         ];
     }
 
-	    private function parseInvoiceItemsFromPayload(int $companyId, array $payload, string $invoiceType): array
-	    {
-	        $lineDescriptions = $payload['line_description'] ?? [];
-	        $lineQty = $payload['line_qty'] ?? [];
-	        $lineUnitCodes = $payload['line_unit_code'] ?? [];
-	        $linePrices = $payload['line_price'] ?? [];
-	        $lineTaxes = $payload['line_tax'] ?? [];
-	        $lineProductIds = $payload['line_product_id'] ?? [];
-	        $lineKinds = $payload['line_kind'] ?? [];
+    private function parseInvoiceItemsFromPayload(int $companyId, array $payload, string $invoiceType): array
+    {
+        $lineDescriptions = $payload['line_description'] ?? [];
+        $lineQty = $payload['line_qty'] ?? [];
+        $lineUnitCodes = $payload['line_unit_code'] ?? [];
+        $linePrices = $payload['line_price'] ?? [];
+        $lineTaxes = $payload['line_tax'] ?? [];
+        $lineProductIds = $payload['line_product_id'] ?? [];
+        $lineKinds = $payload['line_kind'] ?? [];
 
-	        if (!is_array($lineDescriptions) || !is_array($lineQty) || !is_array($lineUnitCodes) || !is_array($linePrices) || !is_array($lineTaxes) || !is_array($lineProductIds) || (!is_array($lineKinds) && $lineKinds !== null)) {
-	            throw new \InvalidArgumentException('Les lignes de facture sont invalides.');
-	        }
+        if (!is_array($lineDescriptions) || !is_array($lineQty) || !is_array($lineUnitCodes) || !is_array($linePrices) || !is_array($lineTaxes) || !is_array($lineProductIds) || (!is_array($lineKinds) && $lineKinds !== null)) {
+            throw new \InvalidArgumentException('Les lignes de facture sont invalides.');
+        }
 
-	        $lineCount = count($lineQty);
-	        if (!is_array($lineKinds) || $lineKinds === []) {
-	            $lineKinds = array_fill(0, $lineCount, 'standard');
-	        }
-	        if (
-	            $lineCount === 0
-	            || $lineCount !== count($lineDescriptions)
-	            || $lineCount !== count($lineUnitCodes)
-	            || $lineCount !== count($linePrices)
-	            || $lineCount !== count($lineTaxes)
-	            || $lineCount !== count($lineProductIds)
-	            || $lineCount !== count($lineKinds)
-	        ) {
-	            throw new \InvalidArgumentException('Les lignes de facture sont incompletes.');
-	        }
+        $lineCount = count($lineQty);
+        if (!is_array($lineKinds) || $lineKinds === []) {
+            $lineKinds = array_fill(0, $lineCount, 'standard');
+        }
+        if (
+            $lineCount === 0
+            || $lineCount !== count($lineDescriptions)
+            || $lineCount !== count($lineUnitCodes)
+            || $lineCount !== count($linePrices)
+            || $lineCount !== count($lineTaxes)
+            || $lineCount !== count($lineProductIds)
+            || $lineCount !== count($lineKinds)
+        ) {
+            throw new \InvalidArgumentException('Les lignes de facture sont incompletes.');
+        }
 
-	        $catalog = [];
-	        $unitMap = [];
-	        if ($invoiceType === 'product') {
-	            $requested = [];
-	            for ($i = 0; $i < $lineCount; $i++) {
-	                $kind = strtolower(trim((string) ($lineKinds[$i] ?? 'standard')));
-	                if ($kind === 'other') {
-	                    continue;
-	                }
-	                $productId = (int) ($lineProductIds[$i] ?? 0);
-	                if ($productId <= 0) {
-	                    throw new \InvalidArgumentException('Selectionnez un produit de stock pour chaque ligne.');
-	                }
-	                $requested[] = $productId;
-	            }
-	            $catalog = $this->loadProductsCatalog($companyId, $requested);
-	            $unitMap = $this->loadProductUnitConversions($companyId, array_keys($catalog));
-	        }
+        $catalog = [];
+        $unitMap = [];
+        if ($invoiceType === 'product') {
+            $requested = [];
+            for ($i = 0; $i < $lineCount; $i++) {
+                $kind = strtolower(trim((string) ($lineKinds[$i] ?? 'standard')));
+                if (in_array($kind, ['other', 'vat'], true)) {
+                    continue;
+                }
+                $productId = (int) ($lineProductIds[$i] ?? 0);
+                if ($productId <= 0) {
+                    throw new \InvalidArgumentException('Selectionnez un produit de stock pour chaque ligne.');
+                }
+                $requested[] = $productId;
+            }
+            $catalog = $this->loadProductsCatalog($companyId, $requested);
+            $unitMap = $this->loadProductUnitConversions($companyId, array_keys($catalog));
+        }
 
-        $subtotal = 0.0;
+        $subtotalRaw = 0.0;
         $taxAmount = 0.0;
+        $vatBaseRaw = 0.0;
+        $vatRate = null;
         $items = [];
 
-	        for ($i = 0; $i < $lineCount; $i++) {
-	            $kind = strtolower(trim((string) ($lineKinds[$i] ?? 'standard')));
-	            $isOther = $kind === 'other';
-	            $qty = round((float) $lineQty[$i], 6);
-	            $price = round((float) $linePrices[$i], 2);
-	            $taxRate = round((float) $lineTaxes[$i], 2);
-	            $productId = null;
-	            $description = trim((string) ($lineDescriptions[$i] ?? ''));
-	            $unitCode = null;
-	            $factorToBase = 1.0;
-	            $quantityBase = null;
+        for ($i = 0; $i < $lineCount; $i++) {
+            $kind = strtolower(trim((string) ($lineKinds[$i] ?? 'standard')));
+            if (!in_array($kind, ['standard', 'other', 'vat'], true)) {
+                $kind = 'standard';
+            }
 
-	            if ($invoiceType === 'product') {
-	                if (!$isOther) {
-	                    $productId = (int) ($lineProductIds[$i] ?? 0);
-	                    if ($productId <= 0) {
-	                        throw new \InvalidArgumentException('Selectionnez un produit de stock pour chaque ligne.');
-	                    }
-	                    $product = $catalog[$productId] ?? null;
-	                    if (!is_array($product)) {
-	                        throw new \InvalidArgumentException('Un produit selectionne est introuvable en stock.');
-	                    }
-	                    $selectedUnitCode = strtolower(trim((string) ($lineUnitCodes[$i] ?? '')));
-	                    if ($selectedUnitCode === '') {
-	                        $selectedUnitCode = strtolower(trim((string) ($product['unit'] ?? 'unite')));
-	                    }
-	                    $factorToBase = (float) ($unitMap[$productId][$selectedUnitCode] ?? 0);
-	                    if ($factorToBase <= 0) {
-	                        throw new \InvalidArgumentException('Unite invalide pour le produit "' . (string) ($product['name'] ?? '') . '".');
-	                    }
-	                    $unitCode = $selectedUnitCode;
-	                    $quantityBase = round($qty * $factorToBase, 6);
-	                    $description = (string) ($product['name'] ?? '');
-	                    $purchaseBase = round((float) ($product['purchase_price'] ?? 0), 6);
-	                } else {
-	                    $productId = null;
-	                    $unitCode = null;
-	                    $factorToBase = 1.0;
-	                    $quantityBase = null;
-	                }
-	            }
+            if ($kind === 'vat') {
+                $candidateRate = round((float) $lineTaxes[$i], 2);
+                if ($candidateRate < 0) {
+                    throw new \InvalidArgumentException('Le taux TVA est invalide.');
+                }
+                if ($vatRate === null) {
+                    $vatRate = $candidateRate;
+                }
+                continue;
+            }
 
-	            if ($description === '' || $qty <= 0 || $price < 0 || $taxRate < 0) {
-	                throw new \InvalidArgumentException('Une ligne de facture contient des valeurs invalides.');
-	            }
+            $isOther = $kind === 'other';
+            $qty = round((float) $lineQty[$i], 6);
+            $price = round((float) $linePrices[$i], 2);
+            $productId = null;
+            $description = trim((string) ($lineDescriptions[$i] ?? ''));
+            $unitCode = null;
+            $factorToBase = 1.0;
+            $quantityBase = null;
+
+            if ($invoiceType === 'product') {
+                if (!$isOther) {
+                    $productId = (int) ($lineProductIds[$i] ?? 0);
+                    if ($productId <= 0) {
+                        throw new \InvalidArgumentException('Selectionnez un produit de stock pour chaque ligne.');
+                    }
+                    $product = $catalog[$productId] ?? null;
+                    if (!is_array($product)) {
+                        throw new \InvalidArgumentException('Un produit selectionne est introuvable en stock.');
+                    }
+                    $selectedUnitCode = strtolower(trim((string) ($lineUnitCodes[$i] ?? '')));
+                    if ($selectedUnitCode === '') {
+                        $selectedUnitCode = strtolower(trim((string) ($product['unit'] ?? 'unite')));
+                    }
+                    $factorToBase = (float) ($unitMap[$productId][$selectedUnitCode] ?? 0);
+                    if ($factorToBase <= 0) {
+                        throw new \InvalidArgumentException('Unite invalide pour le produit "' . (string) ($product['name'] ?? '') . '".');
+                    }
+                    $unitCode = $selectedUnitCode;
+                    $quantityBase = round($qty * $factorToBase, 6);
+                    $description = (string) ($product['name'] ?? '');
+                } else {
+                    $productId = null;
+                    $unitCode = null;
+                    $factorToBase = 1.0;
+                    $quantityBase = null;
+                }
+            }
+
+            if ($description === '' || $qty <= 0 || $price < 0) {
+                throw new \InvalidArgumentException('Une ligne de facture contient des valeurs invalides.');
+            }
 
             $lineSubtotal = $qty * $price;
-            $lineTaxAmount = $lineSubtotal * ($taxRate / 100);
-            $lineTotal = $lineSubtotal + $lineTaxAmount;
-            $subtotal += $lineSubtotal;
-            $taxAmount += $lineTaxAmount;
+            $lineSubtotalRounded = round($lineSubtotal, 2);
+            $lineTotal = $lineSubtotalRounded;
+            $subtotalRaw += $lineSubtotal;
+            if (!$isOther) {
+                $vatBaseRaw += $lineSubtotal;
+            }
 
-	            $items[] = [
-	                'line_kind' => $isOther ? 'other' : 'standard',
-	                'product_id' => $productId,
-	                'description' => $description,
-	                'quantity' => $qty,
-	                'unit_code' => $unitCode,
-	                'factor_to_base' => round($factorToBase, 6),
+            $items[] = [
+                'line_kind' => $isOther ? 'other' : 'standard',
+                'product_id' => $productId,
+                'description' => $description,
+                'quantity' => $qty,
+                'unit_code' => $unitCode,
+                'factor_to_base' => round($factorToBase, 6),
                 'quantity_base' => $quantityBase,
                 'stock_movement_id' => null,
                 'cogs_amount' => 0.0,
-                'margin_amount' => round($lineSubtotal, 2),
+                'margin_amount' => $lineSubtotalRounded,
                 'unit_price' => $price,
-                'tax_rate' => $taxRate,
-                'subtotal' => round($lineSubtotal, 2),
-                'tax_amount' => round($lineTaxAmount, 2),
-                'total' => round($lineTotal, 2),
+                'tax_rate' => 0.0,
+                'subtotal' => $lineSubtotalRounded,
+                'tax_amount' => 0.0,
+                'total' => $lineTotal,
+            ];
+        }
+
+        if ($vatRate !== null) {
+            $vatLineTax = $vatRate > 0.0 ? round($vatBaseRaw * ($vatRate / 100), 2) : 0.0;
+            $taxAmount += $vatLineTax;
+            $items[] = [
+                'line_kind' => 'vat',
+                'product_id' => null,
+                'description' => 'TVA',
+                'quantity' => 1.0,
+                'unit_code' => null,
+                'factor_to_base' => 1.0,
+                'quantity_base' => null,
+                'stock_movement_id' => null,
+                'cogs_amount' => 0.0,
+                'margin_amount' => 0.0,
+                'unit_price' => 0.0,
+                'tax_rate' => round($vatRate, 2),
+                'subtotal' => 0.0,
+                'tax_amount' => $vatLineTax,
+                'total' => $vatLineTax,
             ];
         }
 
         return [
             'items' => $items,
-            'subtotal' => round($subtotal, 2),
+            'subtotal' => round($subtotalRaw, 2),
             'tax_amount' => round($taxAmount, 2),
         ];
     }

@@ -63,6 +63,31 @@ class Database
         $database->ensureProviderDefaults();
     }
 
+    public static function coreSchemaExists(): bool
+    {
+        $database = self::getInstance();
+        $driver = strtolower((string) \Config::DB_DRIVER);
+
+        try {
+            if ($driver === 'sqlite') {
+                $row = $database->fetchOne(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = :name LIMIT 1",
+                    ['name' => 'users']
+                );
+                return $row !== null;
+            }
+
+            if ($driver === 'mysql') {
+                $row = $database->fetchOne('SHOW TABLES LIKE :table_name', ['table_name' => 'users']);
+                return $row !== null;
+            }
+        } catch (\Throwable $exception) {
+            return false;
+        }
+
+        return false;
+    }
+
     public function getConnection(): PDO
     {
         return $this->pdo;
@@ -150,7 +175,47 @@ class Database
                 \Config::DB_CHARSET
             );
 
-            return new PDO($dsn, \Config::DB_USER, \Config::DB_PASS, $options);
+            try {
+                return new PDO($dsn, \Config::DB_USER, \Config::DB_PASS, $options);
+            } catch (PDOException $exception) {
+                $autoInitEnabled = defined('Config::DB_AUTO_INIT') && \Config::DB_AUTO_INIT;
+                $dbName = trim((string) \Config::DB_NAME);
+                $mysqlErrorCode = (int) (($exception->errorInfo[1] ?? 0) ?: 0);
+                $message = strtolower($exception->getMessage());
+                $unknownDatabase = $mysqlErrorCode === 1049
+                    || str_contains($message, 'unknown database')
+                    || str_contains($message, '1049');
+
+                if (!$autoInitEnabled || !$unknownDatabase || $dbName === '') {
+                    throw $exception;
+                }
+
+                $serverDsn = sprintf(
+                    'mysql:host=%s;port=%d;charset=%s',
+                    \Config::DB_HOST,
+                    (int) \Config::DB_PORT,
+                    \Config::DB_CHARSET
+                );
+
+                $serverPdo = new PDO($serverDsn, \Config::DB_USER, \Config::DB_PASS, $options);
+                $escapedName = str_replace('`', '``', $dbName);
+                $charset = trim((string) \Config::DB_CHARSET);
+                if ($charset === '') {
+                    $charset = 'utf8mb4';
+                }
+                $sanitizedCharset = preg_replace('/[^a-z0-9_]/i', '', $charset);
+                if (!is_string($sanitizedCharset) || $sanitizedCharset === '') {
+                    $sanitizedCharset = 'utf8mb4';
+                }
+
+                $serverPdo->exec(sprintf(
+                    'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET %s',
+                    $escapedName,
+                    $sanitizedCharset
+                ));
+
+                return new PDO($dsn, \Config::DB_USER, \Config::DB_PASS, $options);
+            }
         }
 
         throw new RuntimeException('Driver de base de données non supporté: ' . $driver);

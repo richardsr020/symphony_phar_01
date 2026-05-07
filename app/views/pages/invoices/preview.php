@@ -109,37 +109,43 @@ $otherLineBorder = $issuerBrandColor !== '' ? $issuerBrandColor : '#2563eb';
                     <th>Description</th>
                     <th>Qté</th>
                     <th>PU</th>
-                    <th>TVA</th>
                     <th>Total</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($items === []): ?>
                 <tr>
-                    <td colspan="5" class="muted">Aucune ligne de facturation.</td>
+                    <td colspan="4" class="muted">Aucune ligne de facturation.</td>
                 </tr>
                 <?php endif; ?>
 		                <?php foreach ($items as $item): ?>
-		                <?php $isOtherLine = strtolower(trim((string) ($item['line_kind'] ?? 'standard'))) === 'other'; ?>
-		                <tr<?= $isOtherLine ? ' class="line-kind-other" style="background:' . htmlspecialchars($otherLineBg, ENT_QUOTES, 'UTF-8') . '; border-left: 4px solid ' . htmlspecialchars($otherLineBorder, ENT_QUOTES, 'UTF-8') . ';"' : '' ?>>
-		                    <?php if ($isOtherLine): ?>
-		                    <td colspan="4"><?= htmlspecialchars((string) ($item['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+		                <?php
+                            $lineKind = strtolower(trim((string) ($item['line_kind'] ?? 'standard')));
+                            $isOtherLine = $lineKind === 'other';
+                            $isVatLine = $lineKind === 'vat';
+                            $isSpecialLine = $isOtherLine || $isVatLine;
+                            $displayDescription = (string) ($item['description'] ?? '');
+                            if ($isVatLine) {
+                                $displayDescription = sprintf('TVA (%.2f%%)', (float) ($item['tax_rate'] ?? 0));
+                            }
+                        ?>
+		                <tr<?= $isSpecialLine ? ' class="line-kind-other" style="background:' . htmlspecialchars($otherLineBg, ENT_QUOTES, 'UTF-8') . '; border-left: 4px solid ' . htmlspecialchars($otherLineBorder, ENT_QUOTES, 'UTF-8') . ';"' : '' ?>>
+		                    <?php if ($isSpecialLine): ?>
+		                    <td colspan="3"><?= htmlspecialchars($displayDescription, ENT_QUOTES, 'UTF-8') ?></td>
 		                    <td>$<?= number_format((float) ($item['total'] ?? 0), 2) ?></td>
 		                    <?php else: ?>
-		                    <td><?= htmlspecialchars((string) ($item['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+		                    <td><?= htmlspecialchars($displayDescription, ENT_QUOTES, 'UTF-8') ?></td>
 		                    <td><?= number_format((float) ($item['quantity'] ?? 0), 2) ?></td>
 		                    <td>$<?= number_format((float) ($item['unit_price'] ?? 0), 2) ?></td>
-		                    <td><?= number_format((float) ($item['tax_rate'] ?? 0), 2) ?>%</td>
 		                    <td>$<?= number_format((float) ($item['total'] ?? 0), 2) ?></td>
 		                    <?php endif; ?>
 		                </tr>
 		                <?php endforeach; ?>
                 <?php if ($laborAmount > 0.009): ?>
                 <tr>
-                    <td>Main d'oeuvre</td>
+                    <td><?= htmlspecialchars(sprintf('Main d\'oeuvre (TVA %.2f%%)', $laborTaxRate), ENT_QUOTES, 'UTF-8') ?></td>
                     <td><?= number_format(1, 2) ?></td>
                     <td>$<?= number_format($laborAmount, 2) ?></td>
-                    <td><?= number_format($laborTaxRate, 2) ?>%</td>
                     <td>$<?= number_format($laborTotal, 2) ?></td>
                 </tr>
                 <?php endif; ?>

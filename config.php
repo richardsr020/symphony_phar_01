@@ -240,17 +240,20 @@ class Config {
         }
 
         // Initialisation / migrations automatiques de la base
-        // Par défaut: auto-init uniquement en dev; migrations autorisées en prod.
-        $autoInit = self::DB_AUTO_INIT && self::isDev();
+        // Sécurité: en prod on n'auto-crée le schéma que si la base est vide (pas de table users).
+        $autoInitDev = self::DB_AUTO_INIT && self::isDev();
         $autoMigrate = self::DB_AUTO_MIGRATE;
+        $autoInitIfEmpty = self::DB_AUTO_INIT && !$autoInitDev && $autoMigrate;
 
-        if ($autoInit || $autoMigrate) {
+        if ($autoInitDev || $autoMigrate) {
             try {
                 $appPath = defined('APP_PATH') ? APP_PATH : __DIR__ . '/app';
                 require_once $appPath . '/core/Database.php';
-                if ($autoInit) {
+                if ($autoInitDev) {
                     \App\Core\Database::initializeSchema();
                     \App\Core\Database::bootstrapProviderAccess();
+                } elseif ($autoInitIfEmpty && !\App\Core\Database::coreSchemaExists()) {
+                    \App\Core\Database::initializeSchema();
                 }
 
                 if ($autoMigrate) {
