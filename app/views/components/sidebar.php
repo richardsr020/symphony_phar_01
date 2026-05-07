@@ -150,10 +150,10 @@ $companyInfo = [
     <div class="ai-status">
         <div class="ai-indicator">
             <span class="pulse-dot"></span>
-            <span>Mode local actif</span>
+            <span><?= (defined('Config::AI_ENABLED') && \Config::AI_ENABLED) ? 'Symphony IA actif' : 'IA desactivee' ?></span>
         </div>
         <div class="ai-memory">
-            <small>Fonctions IA retirees de l'interface</small>
+            <small><?= (defined('Config::AI_ENABLED') && \Config::AI_ENABLED) ? 'Cliquez sur le bouton flottant pour discuter.' : 'Activez Config::AI_ENABLED pour utiliser l agent.' ?></small>
         </div>
     </div>
     

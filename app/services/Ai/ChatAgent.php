@@ -6,6 +6,7 @@ use App\Core\RolePermissions;
 use App\Models\ChatConversation;
 use App\Models\Dashboard;
 use App\Models\AiResource;
+use App\Models\AiUserNote;
 use App\Models\Invoice;
 use App\Models\Product;
 use App\Models\Transaction;
@@ -21,6 +22,7 @@ class ChatAgent
     private GeminiProvider $geminiProvider;
     private AiResource $aiResourceModel;
     private User $userModel;
+    private AiUserNote $noteModel;
     private ?array $lastAssistantWarning = null;
 
     public function __construct()
@@ -33,6 +35,7 @@ class ChatAgent
         $this->geminiProvider = new GeminiProvider();
         $this->aiResourceModel = new AiResource();
         $this->userModel = new User();
+        $this->noteModel = new AiUserNote();
     }
 
     public function handleMessage(int $companyId, int $userId, array $payload): array
@@ -657,6 +660,92 @@ class ChatAgent
                     'name' => 'invoices.register_payment',
                     'status' => 'success',
                     'input' => $args,
+                ]],
+            ];
+        }
+
+        if ($toolName === 'notes.create') {
+            if (!$confirm) {
+                return [
+                    'text' => 'Je peux enregistrer cette note dans votre compte, mais je dois d’abord avoir votre confirmation.',
+                    'blocks' => $includeWidgets ? [[
+                        'type' => 'actions',
+                        'title' => 'Confirmation',
+                        'actions' => [[
+                            'label' => 'Confirmer enregistrement note',
+                            'tool' => 'notes.create',
+                            'confirm' => true,
+                            'tool_args' => $args,
+                        ]],
+                    ]] : [],
+                    'tool_trace' => [[
+                        'name' => 'notes.create',
+                        'status' => 'confirmation_required',
+                        'input' => $args,
+                    ]],
+                ];
+            }
+
+            $title = trim((string) ($args['title'] ?? ''));
+            $content = trim((string) ($args['content'] ?? ''));
+            if ($content === '') {
+                return [
+                    'text' => 'Contenu de note obligatoire.',
+                    'blocks' => [['type' => 'text', 'text' => 'Fournissez content (et optionnellement title).']],
+                    'tool_trace' => [[
+                        'name' => 'notes.create',
+                        'status' => 'error',
+                        'input' => $args,
+                    ]],
+                ];
+            }
+
+            $noteId = $this->noteModel->create($companyId, $userId, $title, $content, 'ai');
+            return [
+                'text' => 'Note enregistree.',
+                'blocks' => $includeWidgets ? [[
+                    'type' => 'stats',
+                    'title' => 'Note',
+                    'items' => [
+                        ['label' => 'ID', 'value' => (string) $noteId],
+                        ['label' => 'Titre', 'value' => $title !== '' ? $title : '(sans titre)'],
+                    ],
+                ]] : [],
+                'tool_trace' => [[
+                    'name' => 'notes.create',
+                    'status' => 'success',
+                    'input' => $args,
+                    'output' => ['note_id' => $noteId],
+                ]],
+            ];
+        }
+
+        if ($toolName === 'notes.list') {
+            $limit = (int) ($args['limit'] ?? 10);
+            $rows = $this->noteModel->listForUser($companyId, $userId, $limit);
+            $items = [];
+            foreach ($rows as $row) {
+                $title = trim((string) ($row['title'] ?? ''));
+                $content = trim((string) ($row['content'] ?? ''));
+                $label = $title !== '' ? $title : substr($content, 0, 42);
+                $items[] = [
+                    'label' => $label !== '' ? $label : 'Note',
+                    'value' => (string) ($row['created_at'] ?? ''),
+                ];
+            }
+
+            return [
+                'text' => $items === [] ? 'Aucune note enregistree pour le moment.' : 'Voici vos dernieres notes.',
+                'blocks' => $includeWidgets ? [[
+                    'type' => 'list',
+                    'title' => 'Notes',
+                    'items' => $items,
+                ]] : [],
+                'tool_trace' => [[
+                    'name' => 'notes.list',
+                    'status' => 'success',
+                    'input' => $args,
+                    'output' => ['count' => count($items)],
                 ]],
             ];
         }

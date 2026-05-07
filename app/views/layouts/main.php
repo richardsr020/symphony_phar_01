@@ -58,8 +58,11 @@ $asset = static function (string $path) use ($basePath): string {
             </div>
         </main>
     </div>
+
+    <?php include __DIR__ . '/../components/symphony-ai.php'; ?>
     <!-- Scripts -->
     <script src="<?= htmlspecialchars($asset('/public/js/app.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
+    <script src="<?= htmlspecialchars($asset('/public/js/modules/symphony-ai.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
     
     <!-- Page spécifique -->
     <?php if (isset($pageScript)): ?>

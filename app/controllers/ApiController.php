@@ -6,6 +6,7 @@ use App\Core\RolePermissions;
 use App\Core\Session;
 use App\Models\Dashboard;
 use App\Models\Invoice;
+use App\Services\Ai\ChatAgent;
 
 class ApiController extends Controller
 {
@@ -35,17 +36,106 @@ class ApiController extends Controller
 
     public function chat(): void
     {
-        $this->json(['error' => 'Fonctionnalite IA desactivee en mode local.'], 410);
+        if (!defined('Config::AI_ENABLED') || \Config::AI_ENABLED !== true) {
+            $this->json(['error' => 'Fonctionnalite IA desactivee.'], 410);
+            return;
+        }
+
+        $companyId = $this->resolveCompanyId();
+        $userId = $this->resolveUserId();
+        if ($companyId <= 0 || $userId <= 0) {
+            $this->json(['error' => 'Authentification requise'], 401);
+            return;
+        }
+
+        $sessionUser = Session::get('user', []);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+        if (!RolePermissions::canAccessChat($role)) {
+            $this->json(['error' => 'Acces refuse'], 403);
+            return;
+        }
+
+        $raw = file_get_contents('php://input');
+        $payload = is_string($raw) ? json_decode($raw, true) : null;
+        if (!is_array($payload)) {
+            $payload = $_POST ?? [];
+        }
+
+        try {
+            $agent = new ChatAgent();
+            $response = $agent->handleMessage($companyId, $userId, $payload);
+            $this->json($response);
+        } catch (\InvalidArgumentException $exception) {
+            $this->json(['error' => $exception->getMessage()], 422);
+        } catch (\Throwable $exception) {
+            $this->json(['error' => 'Erreur IA: ' . $exception->getMessage()], 500);
+        }
     }
 
     public function chatConversations(): void
     {
-        $this->json(['error' => 'Fonctionnalite IA desactivee en mode local.'], 410);
+        if (!defined('Config::AI_ENABLED') || \Config::AI_ENABLED !== true) {
+            $this->json(['error' => 'Fonctionnalite IA desactivee.'], 410);
+            return;
+        }
+
+        $companyId = $this->resolveCompanyId();
+        $userId = $this->resolveUserId();
+        if ($companyId <= 0 || $userId <= 0) {
+            $this->json(['error' => 'Authentification requise'], 401);
+            return;
+        }
+
+        $sessionUser = Session::get('user', []);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+        if (!RolePermissions::canAccessChat($role)) {
+            $this->json(['error' => 'Acces refuse'], 403);
+            return;
+        }
+
+        try {
+            $agent = new ChatAgent();
+            $this->json([
+                'conversations' => $agent->listConversations($companyId, $userId),
+            ]);
+        } catch (\Throwable $exception) {
+            $this->json(['error' => 'Erreur IA: ' . $exception->getMessage()], 500);
+        }
     }
 
     public function chatHistory($id): void
     {
-        $this->json(['error' => 'Fonctionnalite IA desactivee en mode local.'], 410);
+        if (!defined('Config::AI_ENABLED') || \Config::AI_ENABLED !== true) {
+            $this->json(['error' => 'Fonctionnalite IA desactivee.'], 410);
+            return;
+        }
+
+        $companyId = $this->resolveCompanyId();
+        $userId = $this->resolveUserId();
+        if ($companyId <= 0 || $userId <= 0) {
+            $this->json(['error' => 'Authentification requise'], 401);
+            return;
+        }
+
+        $sessionUser = Session::get('user', []);
+        $role = RolePermissions::normalizeRole((string) ($sessionUser['role'] ?? ''));
+        if (!RolePermissions::canAccessChat($role)) {
+            $this->json(['error' => 'Acces refuse'], 403);
+            return;
+        }
+
+        $conversationId = (int) $id;
+        if ($conversationId <= 0) {
+            $this->json(['conversation' => null, 'messages' => []]);
+            return;
+        }
+
+        try {
+            $agent = new ChatAgent();
+            $this->json($agent->getConversationHistory($companyId, $userId, $conversationId));
+        } catch (\Throwable $exception) {
+            $this->json(['error' => 'Erreur IA: ' . $exception->getMessage()], 500);
+        }
     }
 
     public function stats(): void

@@ -4,7 +4,7 @@
             <div class="chatbox-header-info">
                 <div class="chatbox-avatar"><i class="fa-solid fa-robot"></i></div>
                 <div>
-                    <h1>Conversation avec Yakafrika IA</h1>
+                    <h1>Conversation avec Symphony IA</h1>
                     <p>Agent comptable autonome (MCP + tools + memoire)</p>
                 </div>
             </div>
